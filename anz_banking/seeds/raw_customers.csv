@@ -1,0 +1,11 @@
+customer_id,first_name,last_name,email,date_of_birth,state,signup_date
+1,Olivia,Nguyen,olivia.nguyen@example.com,1988-03-12,VIC,2019-05-01
+2,Liam,Smith,liam.smith@example.com,1975-11-30,NSW,2018-02-17
+3,Charlotte,Brown,charlotte.brown@example.com,1992-07-08,QLD,2020-09-23
+4,Noah,Wilson,noah.wilson@example.com,1983-01-19,WA,2017-11-05
+5,Amelia,Taylor,amelia.taylor@example.com,1990-06-25,SA,2021-03-14
+6,William,Johnson,william.johnson@example.com,1968-09-02,VIC,2016-08-30
+7,Isla,Martin,isla.martin@example.com,1995-12-11,NSW,2022-01-19
+8,Jack,Lee,jack.lee@example.com,1979-04-27,QLD,2019-10-02
+9,Mia,White,mia.white@example.com,1986-08-15,ACT,2020-06-11
+10,Ethan,Harris,ethan.harris@example.com,1972-02-03,TAS,2015-12-20

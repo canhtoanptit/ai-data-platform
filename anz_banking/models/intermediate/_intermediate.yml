@@ -1,0 +1,18 @@
+version: 2
+
+models:
+  - name: int_accounts_cdc
+    description: >
+      Current account state derived from the DMS CDC feed (one row per account =
+      latest change). Incremental + merge; soft-delete via is_deleted.
+    columns:
+      - name: account_id
+        description: Primary key — unique after collapsing the change stream.
+        data_tests: [unique, not_null]
+      - name: _cdc_op
+        description: The DMS operation of the latest event (I/U/D).
+        data_tests:
+          - accepted_values:
+              values: ['I', 'U', 'D']
+      - name: is_deleted
+        description: True when the latest event was a delete.

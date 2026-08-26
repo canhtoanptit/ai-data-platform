@@ -1,0 +1,21 @@
+version: 2
+
+# Declares the raw tables (loaded here via `dbt seed`) as dbt "sources".
+# In a real ANZ setup these would be tables landed by Fivetran/Airbyte/etc.
+# Staging models select from these with source('collections', '...').
+sources:
+  - name: collections
+    description: Raw collections-platform tables landed into the raw schema.
+    schema: raw
+    tables:
+      - name: raw_customers
+      - name: raw_agents
+      - name: raw_accounts
+      - name: raw_payments
+      - name: raw_collection_cases
+      - name: raw_contact_attempts
+      - name: raw_promises_to_pay
+      - name: raw_accounts_cdc
+        description: >
+          Simulated AWS DMS change-data-capture feed (append-only stream of
+          change events). op = I/U/D, cdc_timestamp = commit time.

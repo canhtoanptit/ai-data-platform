@@ -1,0 +1,14 @@
+# Run Cube locally against your Snowflake trial:
+#   cp .env.example .env   # fill in your Snowflake details
+#   docker compose up
+# Then open the Playground at http://localhost:4000 to build queries and copy
+# the generated REST/GraphQL/SQL.
+services:
+  cube:
+    image: cubejs/cube:latest
+    ports:
+      - "4000:4000"   # REST + GraphQL API + Playground UI
+      - "15432:15432" # SQL API (Postgres wire protocol)
+    env_file: .env
+    volumes:
+      - ./model:/cube/conf/model

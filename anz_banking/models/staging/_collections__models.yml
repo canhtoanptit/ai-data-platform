@@ -1,0 +1,95 @@
+version: 2
+
+models:
+  - name: stg_collections__customers
+    description: One row per customer, lightly cleaned.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: email
+        data_tests: [not_null]
+
+  - name: stg_collections__agents
+    description: One row per collections agent.
+    columns:
+      - name: agent_id
+        data_tests: [unique, not_null]
+
+  - name: stg_collections__accounts
+    description: One row per account (loan / card).
+    columns:
+      - name: account_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        description: FK to customers.
+        data_tests:
+          - not_null
+          - relationships:
+              to: ref('stg_collections__customers')
+              field: customer_id
+      - name: account_status
+        data_tests:
+          - accepted_values:
+              values: ['current', 'delinquent', 'closed']
+
+  - name: stg_collections__payments
+    description: One row per payment received against an account.
+    columns:
+      - name: payment_id
+        data_tests: [unique, not_null]
+      - name: account_id
+        data_tests:
+          - relationships:
+              to: ref('stg_collections__accounts')
+              field: account_id
+
+  - name: stg_collections__cases
+    description: One row per collections case opened on a delinquent account.
+    columns:
+      - name: case_id
+        data_tests: [unique, not_null]
+      - name: account_id
+        data_tests:
+          - relationships:
+              to: ref('stg_collections__accounts')
+              field: account_id
+      - name: agent_id
+        data_tests:
+          - relationships:
+              to: ref('stg_collections__agents')
+              field: agent_id
+      - name: case_status
+        data_tests:
+          - accepted_values:
+              values: ['open', 'resolved', 'written_off']
+
+  - name: stg_collections__contact_attempts
+    description: One row per contact attempt (call/sms/email) against a case.
+    columns:
+      - name: attempt_id
+        data_tests: [unique, not_null]
+      - name: case_id
+        data_tests:
+          - relationships:
+              to: ref('stg_collections__cases')
+              field: case_id
+      - name: channel
+        data_tests:
+          - accepted_values:
+              values: ['call', 'sms', 'email']
+
+  - name: stg_collections__promises_to_pay
+    description: One row per promise-to-pay (PTP) made on a case.
+    columns:
+      - name: ptp_id
+        data_tests: [unique, not_null]
+      - name: case_id
+        data_tests:
+          - relationships:
+              to: ref('stg_collections__cases')
+              field: case_id
+      - name: ptp_status
+        data_tests:
+          - accepted_values:
+              values: ['true', 'false', 'pending']

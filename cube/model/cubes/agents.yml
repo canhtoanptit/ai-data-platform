@@ -1,0 +1,20 @@
+cubes:
+  # Agent dimension (gold layer). Joined from collection_cases so you can slice
+  # collections KPIs by agent team without duplicating the join everywhere.
+  - name: agents
+    sql_table: ANZ_COLLECTIONS.MARTS.DIM_AGENTS
+    description: Collections agent dimension. See dbt dim_agents.
+
+    dimensions:
+      - name: agent_id
+        sql: agent_id
+        type: number
+        primary_key: true
+
+      - name: agent_name
+        sql: agent_name
+        type: string
+
+      - name: team
+        sql: team
+        type: string

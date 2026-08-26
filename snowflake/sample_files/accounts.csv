@@ -1,0 +1,6 @@
+account_id,customer_id,product_type,open_date,credit_limit,current_balance,status
+5001,1,credit_card,2019-05-10,8000,7420.55,delinquent
+5002,2,personal_loan,2018-03-01,25000,18300.00,delinquent
+5003,3,credit_card,2020-10-01,5000,120.00,current
+5004,4,home_loan,2017-12-01,450000,398000.00,current
+5005,5,credit_card,2021-04-01,12000,11890.20,delinquent

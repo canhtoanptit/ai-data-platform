@@ -1,0 +1,11 @@
+.env
+.venv/
+target/
+logs/
+.DS_Store
+# profiles.yml only references env vars (no secrets) so it's safe to commit;
+# .user.yml holds an anonymous id, so keep that ignored.
+.dbt/.user.yml
+# Python
+__pycache__/
+*.pyc

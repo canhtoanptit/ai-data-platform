@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: Customer dimension with account/payment rollups.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+
+  - name: dim_agents
+    description: Collections agent dimension.
+    columns:
+      - name: agent_id
+        data_tests: [unique, not_null]
+
+  - name: fct_collection_cases
+    description: >
+      One row per collections case, enriched with account, customer, agent,
+      delinquency bucket and case-level PTP/contact activity. Central fact.
+    columns:
+      - name: case_id
+        data_tests: [unique, not_null]
+      - name: delinquency_bucket
+        data_tests:
+          - accepted_values:
+              values: ['current', '1-30 dpd', '31-60 dpd', '61-90 dpd', '90+ dpd']
+      - name: case_status
+        data_tests:
+          - accepted_values:
+              values: ['open', 'resolved', 'written_off']
+
+  - name: collections_performance
+    description: Collections KPIs aggregated by agent team and delinquency bucket.
+    data_tests:
+      # dbt_utils package test: the grain is (team, delinquency_bucket)
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - team
+            - delinquency_bucket
+    columns:
+      - name: cure_rate_pct
+        description: Percent of cases in the segment that were resolved.

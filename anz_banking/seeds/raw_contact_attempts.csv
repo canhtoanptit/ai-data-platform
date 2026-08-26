@@ -1,0 +1,18 @@
+attempt_id,case_id,agent_id,attempt_ts,channel,outcome
+30001,7001,101,2024-01-03 09:15:00,call,no_answer
+30002,7001,101,2024-01-04 14:30:00,call,right_party_contact
+30003,7001,101,2024-01-04 14:45:00,sms,promise
+30004,7002,103,2023-11-16 10:00:00,call,left_message
+30005,7002,103,2023-11-20 11:20:00,call,right_party_contact
+30006,7002,103,2023-12-01 16:00:00,email,no_answer
+30007,7003,102,2024-02-02 09:00:00,call,right_party_contact
+30008,7003,102,2024-02-02 09:10:00,sms,promise
+30009,7004,104,2023-10-21 13:00:00,call,wrong_number
+30010,7004,104,2023-11-05 15:30:00,call,no_answer
+30011,7005,101,2024-01-21 10:45:00,call,right_party_contact
+30012,7005,101,2024-01-21 10:55:00,sms,promise
+30013,7006,102,2024-03-02 12:00:00,call,no_answer
+30014,7006,102,2024-03-05 09:30:00,call,right_party_contact
+30015,7007,103,2023-12-11 14:00:00,email,left_message
+30016,7007,103,2023-12-15 10:15:00,call,right_party_contact
+30017,7008,104,2023-11-02 11:00:00,call,no_answer

@@ -1,0 +1,90 @@
+cubes:
+  # Semantic model over the gold-layer fact table. Measures defined here (e.g.
+  # cure_rate, ptp_kept_rate) are computed identically for every app/dashboard.
+  - name: collection_cases
+    sql_table: ANZ_COLLECTIONS.MARTS.FCT_COLLECTION_CASES
+    description: One row per collections case, enriched. See dbt fct_collection_cases.
+
+    joins:
+      - name: agents
+        sql: "{CUBE}.agent_id = {agents}.agent_id"
+        relationship: many_to_one
+
+    dimensions:
+      - name: case_id
+        sql: case_id
+        type: number
+        primary_key: true
+
+      - name: delinquency_bucket
+        sql: delinquency_bucket
+        type: string
+
+      - name: case_status
+        sql: case_status
+        type: string
+
+      - name: product_type
+        sql: product_type
+        type: string
+
+      - name: customer_name
+        sql: customer_name
+        type: string
+
+      - name: opened_date
+        sql: opened_date
+        type: time
+
+    measures:
+      - name: case_count
+        type: count
+
+      - name: total_delinquent_amount
+        sql: delinquent_amount
+        type: sum
+        format: currency
+
+      - name: cured_cases
+        sql: is_cured
+        type: sum
+
+      - name: written_off_cases
+        sql: is_written_off
+        type: sum
+
+      # Calculated measure referencing other measures with {curly} syntax.
+      - name: cure_rate
+        sql: "100.0 * {cured_cases} / NULLIF({case_count}, 0)"
+        type: number
+        format: percent
+
+      - name: ptp_kept
+        sql: ptp_kept_count
+        type: sum
+
+      - name: ptp_total
+        sql: ptp_count
+        type: sum
+
+      - name: ptp_kept_rate
+        sql: "100.0 * {ptp_kept} / NULLIF({ptp_total}, 0)"
+        type: number
+        format: percent
+
+    # Pre-aggregation: Cube materializes this rollup and serves app queries from
+    # it (not Snowflake) — sub-second, high-concurrency, low warehouse cost.
+    pre_aggregations:
+      - name: performance_by_bucket
+        measures:
+          - case_count
+          - total_delinquent_amount
+          - cured_cases
+          - written_off_cases
+        dimensions:
+          - delinquency_bucket
+          - case_status
+        time_dimension: opened_date
+        granularity: day
+        refresh_key:
+          every: 1 hour

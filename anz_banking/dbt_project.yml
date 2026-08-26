@@ -1,0 +1,56 @@
+name: 'anz_banking'
+version: '1.0.0'
+
+# The profile in .dbt/profiles.yml that dbt uses to connect to Snowflake.
+profile: 'anz_banking'
+
+# Where dbt looks for each type of file. These are the defaults.
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:         # removed by `dbt clean`
+  - "target"
+  - "dbt_packages"
+
+# --- Model materialisation strategy, by layer ---------------------------
+# staging     -> views  (cheap, always fresh, thin rename/cast layer)
+# intermediate-> ephemeral (inlined as CTEs, no warehouse object)
+# marts       -> tables (queried often by BI, worth materialising)
+models:
+  anz_banking:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: ephemeral
+    marts:
+      +materialized: table
+      +schema: marts
+
+# Seeds land in a dedicated schema and we type a few columns explicitly so
+# Snowflake doesn't guess (e.g. keep money as NUMBER, ids as INT).
+seeds:
+  anz_banking:
+    +schema: raw
+    raw_accounts:
+      +column_types:
+        credit_limit: number(12,2)
+        current_balance: number(12,2)
+    raw_payments:
+      +column_types:
+        amount: number(12,2)
+    raw_collection_cases:
+      +column_types:
+        delinquent_amount: number(12,2)
+    raw_promises_to_pay:
+      +column_types:
+        promised_amount: number(12,2)
+    raw_accounts_cdc:
+      +column_types:
+        cdc_timestamp: timestamp_ntz
+        credit_limit: number(12,2)
+        current_balance: number(12,2)

@@ -1,0 +1,9 @@
+op,cdc_timestamp,account_id,customer_id,product_type,open_date,credit_limit,current_balance,status
+I,2024-03-01 08:00:00,5001,1,credit_card,2019-05-10,8000,7420.55,delinquent
+U,2024-03-05 09:30:00,5001,1,credit_card,2019-05-10,8000,7100.00,delinquent
+I,2024-03-01 08:00:00,5002,2,personal_loan,2018-03-01,25000,18300.00,delinquent
+U,2024-03-06 14:00:00,5002,2,personal_loan,2018-03-01,25000,17800.00,delinquent
+I,2024-03-01 08:00:00,5003,3,credit_card,2020-10-01,5000,120.00,current
+D,2024-03-07 11:15:00,5003,3,credit_card,2020-10-01,5000,120.00,current
+I,2024-03-08 10:00:00,5099,9,credit_card,2024-03-01,4000,250.00,current
+U,2024-03-09 10:00:00,5001,1,credit_card,2019-05-10,8000,6900.00,delinquent

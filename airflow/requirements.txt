@@ -1,0 +1,14 @@
+# MWAA requirements.txt — uploaded to the S3 env bucket; MWAA installs these
+# into every worker. Pin against your MWAA Airflow version's constraints file:
+#   https://raw.githubusercontent.com/apache/airflow/constraints-<AIRFLOW_VERSION>/constraints-3.11.txt
+#
+# Providers used by the DAG:
+apache-airflow-providers-snowflake
+apache-airflow-providers-amazon
+apache-airflow-providers-common-sql
+
+# dbt, so the BashOperator can run `dbt build` inside the MWAA worker.
+# NOTE: dbt + Airflow can have dependency conflicts. Two clean alternatives in
+# production: (a) run dbt in a separate ECS/Fargate task, or (b) use
+# astronomer-cosmos to render dbt models as native Airflow tasks. See README.
+dbt-snowflake==1.12.0
