@@ -54,5 +54,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # React dashboard. The image is nginx serving a static build — it holds no
+  # secrets and talks to nothing at build time, so the API URL is not baked in:
+  # the browser calls same-origin /api/... and nginx proxies it to the `api`
+  # service. See web/nginx.conf.
+  web:
+    build: ./web
+    container_name: anz_web
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

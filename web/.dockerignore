@@ -1,0 +1,14 @@
+# Everything here is either reproduced inside the image or irrelevant to it.
+# node_modules especially: the host's copy may hold platform-specific binaries,
+# and `npm ci` installs the right ones for the build image.
+node_modules
+dist
+.vite
+
+# The image serves the build; it does not read the docs or its own recipe.
+README.md
+Dockerfile
+.dockerignore
+.git
+.DS_Store
+*.log

@@ -1,0 +1,272 @@
+/* The whole stylesheet. One palette, declared once as custom properties.
+ *
+ * These tokens cover the DOM; the chart marks are coloured from
+ * `src/lib/palette.ts` because recharts writes colours into SVG presentation
+ * attributes, where var() is not reliably supported. Same palette, two
+ * consumers — the comment at the top of palette.ts says so from the other side.
+ *
+ * Light only, on purpose: one committed look is easier to keep coherent than two
+ * half-tuned ones, so every colour below is stated outright rather than inherited
+ * from the host. */
+
+:root {
+  --plane: #f9f9f7; /* page background */
+  --surface: #fcfcfb; /* cards, tooltips */
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-muted: #898781;
+  --grid: #e1e0d9;
+  --border: rgba(11, 11, 11, 0.1);
+  --good: #0ca30c;
+  --critical: #d03b3b;
+
+  --radius: 8px;
+  --gap: 20px;
+
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--plane);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--plane);
+  color: var(--ink);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+/* --- header ---------------------------------------------------------------- */
+
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.header__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header__title {
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+}
+
+.header__subtitle {
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+
+.health {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--plane);
+}
+
+.health__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+}
+
+.health--ok .health__dot {
+  background: var(--good);
+}
+
+.health--down .health__dot {
+  background: var(--critical);
+}
+
+/* --- layout --------------------------------------------------------------- */
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--gap) 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+/* Side by side once there is room for two readable charts; stacked below that. */
+.chart-grid {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .chart-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* --- panel ---------------------------------------------------------------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.panel__title {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.panel__subtitle {
+  color: var(--ink-muted);
+  font-size: 0.8125rem;
+}
+
+/* --- KPI tiles ------------------------------------------------------------ */
+
+.tiles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.tile {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: var(--plane);
+}
+
+.tile__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+.tile__value {
+  margin-top: 6px;
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* --- charts --------------------------------------------------------------- */
+
+/* ResponsiveContainer measures its parent, so the height has to live here. */
+.chart {
+  height: 300px;
+}
+
+.legend__label {
+  color: var(--ink-2);
+  font-size: 0.8125rem;
+}
+
+/* --- table ---------------------------------------------------------------- */
+
+/* Wide tables scroll inside the panel rather than widening the page. */
+.table-wrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table th,
+.table td {
+  padding: 9px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--grid);
+  white-space: nowrap;
+}
+
+.table th {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: var(--plane);
+}
+
+/* Figures in a column align on the digit, so they can be compared by eye. */
+.table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- filters and states --------------------------------------------------- */
+
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+
+.filter select {
+  font: inherit;
+  color: var(--ink);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.state {
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+  padding: 24px 0;
+}
+
+.state--error {
+  color: var(--critical);
+}

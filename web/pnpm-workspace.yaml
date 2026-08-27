@@ -1,0 +1,24 @@
+# pnpm settings. From v10.16 on this file is pnpm's config location, workspace or
+# not — and these two settings are the reason this project uses pnpm and not npm.
+
+# Refuse to install any version published less than 7 days ago (value in minutes).
+#
+# Supply-chain attacks on npm work by publishing a malicious version of a real
+# package and waiting for someone's `install` to pick it up; they are usually
+# spotted and unpublished within hours. A week of quarantine means this project
+# resolves to versions the ecosystem has already had time to look at. The cost is
+# that the newest release of anything is unavailable for a week — no cost at all
+# for a dashboard's dependencies. It is a real constraint, not decoration: the
+# lockfile pins @tanstack/react-query 5.101.4 because 5.102.7 was hours old.
+minimumReleaseAge: 10080
+
+# pnpm 10 does not run dependencies' install scripts by default — an install
+# script is arbitrary code executing at install time, which is exactly the
+# payload a compromised package wants to ship. Packages that genuinely need one
+# (native binaries compiled or fetched at install) go in this list, by name.
+#
+# The list is empty because nothing in this tree needs a script: Vite 8 bundles
+# with rolldown, whose platform binaries ship as prebuilt optional packages. If a
+# future dependency does need one, `pnpm install` says so by name — add it here
+# rather than turning the protection off.
+onlyBuiltDependencies: []

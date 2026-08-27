@@ -7,7 +7,7 @@ FLAGS := --project-dir anz_banking --profiles-dir .dbt
 
 .PHONY: help deps debug seed run test build snapshot docs clean fresh \
         local-up local-build local-run local-test local-down \
-        api-dev api-test stack-up stack-down
+        api-dev api-test web-dev web-test stack-up stack-down
 
 help:            ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -74,7 +74,21 @@ api-dev:         ## Run the API locally with autoreload (http://localhost:8000/d
 api-test:        ## Run the API integration tests (needs the local warehouse built)
 	cd api && uv run pytest
 
-stack-up:        ## Start the whole stack (Postgres + API) and wait until healthy
+# --- React dashboard (web/) --------------------------------------------------
+# Its own pnpm project, so `cd web` for the same reason api/ gets its own
+# targets. pnpm rather than npm for two supply-chain settings in
+# web/pnpm-workspace.yaml: a 7-day quarantine on newly published versions, and
+# dependency install scripts blocked unless allowlisted.
+# In dev, Vite proxies /api to localhost:8000 — so run `make api-dev` or
+# `make stack-up` alongside it.
+
+web-dev:         ## Run the dashboard with hot reload (http://localhost:5173)
+	cd web && pnpm install && pnpm dev
+
+web-test:        ## Run the dashboard unit + component tests (vitest)
+	cd web && pnpm test
+
+stack-up:        ## Start the whole stack (Postgres + API + dashboard), wait until healthy
 	docker compose up -d --wait
 
 stack-down:      ## Stop the whole stack (keeps the data volume)

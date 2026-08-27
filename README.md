@@ -44,13 +44,16 @@ demos, `dev` (Snowflake) for the cloud. Details in
 ## Quickstart (zero credentials)
 
 ```bash
-make stack-up      # Postgres 16 + API, waits until healthy
+make stack-up      # Postgres 16 + API + dashboard, waits until healthy
 make local-build   # dbt: seed → staging → marts → snapshot → tests (all local)
 
 curl -s localhost:8000/api/metrics/summary
 # {"total_cases":8,"open_cases":4,"total_delinquent_amount":16630.75,
 #  "cure_rate_pct":25.0,"ptp_kept_rate_pct":50.0,"rpc_rate_pct":35.3}
 ```
+
+Then open the dashboard at <http://localhost:3000> — KPI tiles, charts and the
+case table, straight off those endpoints.
 
 Swagger UI: <http://localhost:8000/docs> · dbt lineage docs: `make docs` ·
 stop everything: `make stack-down` (the data volume survives).
@@ -73,7 +76,7 @@ default `generate_schema_name`):
 | **dbt project** | seeds → staging → intermediate → marts; tests, docs, SCD2 snapshot, macros, a DMS-style CDC incremental merge | [`anz_banking/`](./anz_banking) |
 | **Local warehouse** | Postgres 16 in compose; dbt `local` target | [`docker-compose.yml`](./docker-compose.yml) |
 | **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases` | [`api/`](./api) |
-| **Web** | React + TypeScript dashboard | `web/` *(Step 3 — in progress)* |
+| **Web** | React + TypeScript dashboard | [`web/`](./web) |
 | **Cloud warehouse path** | Snowflake `COPY INTO` ingestion + file generation (CSV & pipe-delimited) | [`snowflake/`](./snowflake) |
 | **Orchestration** | Airflow DAG (ingest → dbt build → unload), written MWAA-deployable | [`airflow/`](./airflow) |
 | **Semantic layer** | Cube models over the marts (metrics API alternative) | [`cube/`](./cube) |
@@ -99,7 +102,7 @@ the DMS → S3 → Snowflake ingestion architecture is covered in
 - [x] Cross-database dbt project (Postgres local / Snowflake cloud)
 - [x] CDC merge model (DMS-style I/U/D stream → current state)
 - [x] FastAPI read layer over the marts
-- [ ] React + TypeScript dashboard
+- [x] React + TypeScript dashboard
 - [ ] Data catalog + lineage explorer (parsed from dbt artifacts)
 - [ ] Pipeline observability (dbt run/test results)
 - [ ] AI chat: natural language → SQL over the marts (Claude API)
