@@ -141,3 +141,15 @@ def test_missing_case_returns_404(client: TestClient) -> None:
     response = client.get("/api/cases/9999")
     assert response.status_code == 404
     assert response.json()["detail"] == "case 9999 not found"
+
+
+def test_agents_lists_all_four(client: TestClient) -> None:
+    response = client.get("/api/agents")
+    assert response.status_code == 200
+    body = response.json()
+
+    # Ordered by (team, agent_id): early_stage 101,102 then late_stage 103,104.
+    assert [agent["agent_id"] for agent in body] == [101, 102, 103, 104]
+    assert {agent["team"] for agent in body} == {"early_stage", "late_stage"}
+    assert all(agent["agent_name"] for agent in body)
+    assert set(body[0]) == {"agent_id", "agent_name", "team", "hire_date"}

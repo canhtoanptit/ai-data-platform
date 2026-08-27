@@ -65,3 +65,12 @@ class Case(BaseModel):
     rpc_count: int
     ptp_count: int
     ptp_kept_count: int
+
+class Agent(BaseModel):
+    """One row of dim_agents. name/team are guaranteed by the dim, so they
+    are typed non-null — a null there is a data bug worth failing loudly on."""
+
+    agent_id: int
+    agent_name: str
+    team: str
+    hire_date: date | None

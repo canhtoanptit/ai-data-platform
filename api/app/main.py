@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .db import engine
-from .routers import cases, metrics
+from .routers import agents, cases, metrics
 from .schemas import Health
 
 # Local dev servers for a front end: Vite (5173) and Next/CRA (3000). Kept as an
@@ -56,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(metrics.router)
     app.include_router(cases.router)
+    app.include_router(agents.router)
     return app
 
 
