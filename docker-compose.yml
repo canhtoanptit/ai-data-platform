@@ -30,5 +30,29 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # FastAPI read layer over the marts dbt built. See api/README.md.
+  api:
+    build: ./api
+    container_name: anz_api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Inside the compose network, containers reach each other by SERVICE NAME
+      # — so the host is `postgres`, not `localhost` (localhost inside a
+      # container is that container itself). Likewise 5432 here is the
+      # container's own port, not the host-mapped POSTGRES_PORT above.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-platform}
+      POSTGRES_USER: ${POSTGRES_USER:-platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-platform}
+      MARTS_SCHEMA: ${MARTS_SCHEMA:-analytics_marts}
+    depends_on:
+      postgres:
+        # Wait for pg_isready, not just "container started", so the API's first
+        # connection doesn't race Postgres' startup.
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:

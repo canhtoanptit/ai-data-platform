@@ -6,7 +6,8 @@ DBT   := uv run --env-file .env dbt
 FLAGS := --project-dir anz_banking --profiles-dir .dbt
 
 .PHONY: help deps debug seed run test build snapshot docs clean fresh \
-        local-up local-build local-run local-test local-down
+        local-up local-build local-run local-test local-down \
+        api-dev api-test stack-up stack-down
 
 help:            ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -60,4 +61,21 @@ local-test:      ## Run all data tests against local Postgres
 	$(DBT) test $(FLAGS) $(LOCAL)
 
 local-down:      ## Stop the local Postgres warehouse (keeps the data volume)
+	docker compose down
+
+# --- FastAPI read layer (api/) -----------------------------------------------
+# api/ is its own uv project with its own lockfile — it shares nothing with the
+# dbt tooling above except the Postgres it reads from. Hence `cd api` rather
+# than the $(DBT) wrapper.
+
+api-dev:         ## Run the API locally with autoreload (http://localhost:8000/docs)
+	cd api && uv run uvicorn app.main:app --reload
+
+api-test:        ## Run the API integration tests (needs the local warehouse built)
+	cd api && uv run pytest
+
+stack-up:        ## Start the whole stack (Postgres + API) and wait until healthy
+	docker compose up -d --wait
+
+stack-down:      ## Stop the whole stack (keeps the data volume)
 	docker compose down

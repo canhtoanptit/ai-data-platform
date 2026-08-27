@@ -98,13 +98,33 @@ The `analytics_*` prefixing is dbt's default `generate_schema_name` combining th
 target's base schema with each layer's `+schema`. Snowflake (`dev`) stays the
 default target and behaves identically, prefixed with your `SNOWFLAKE_SCHEMA`.
 
+#### API
+
+[`api/`](./api) is a **FastAPI** read layer that serves the marts as REST — the
+consumption layer an app or agent would call. `make stack-up` brings up Postgres
+**and** the API together:
+
+```bash
+make stack-up                                   # docker compose up -d --wait
+curl -s localhost:8000/api/metrics/summary
+# {"total_cases":8,"open_cases":4,"total_delinquent_amount":16630.75,
+#  "cure_rate_pct":25.0,"ptp_kept_rate_pct":50.0,"rpc_rate_pct":35.3}
+```
+
+Endpoints: `/api/health`, `/api/metrics/summary`, `/api/metrics/performance`,
+`/api/cases` (filter by `status`/`bucket`, paged), `/api/cases/{case_id}`. Swagger
+UI at <http://localhost:8000/docs>. Also `make api-dev` (autoreload) and
+`make api-test`; `make stack-down` stops everything. Details in
+[`api/README.md`](./api/README.md).
+
 ## Layout
 
 | Path | What it is |
 |------|-----------|
 | `.env` / `.env.example` | Snowflake credentials (env vars used by `profiles.yml`) |
 | `.dbt/profiles.yml` | dbt connection profiles: `dev` (Snowflake) + `local` (Postgres) |
-| `docker-compose.yml` | Local Postgres warehouse for `--target local` |
+| `docker-compose.yml` | Local Postgres warehouse + the API service |
+| `api/` | FastAPI read layer serving the marts as REST (own uv project) |
 | `Makefile` | Thin wrapper around `uv run --env-file .env dbt …` |
 | `anz_banking/` | The dbt project |
 | `anz_banking/seeds/` | Sample raw data as CSVs |
