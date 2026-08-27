@@ -1,9 +1,18 @@
-# End-to-end architecture (mapped to the ANZ JD)
+# Architecture
 
-The JD is a data-engineering role: build/maintain **ETL/ELT pipelines with AWS
-MWAA + dbt**, do **file generation & ingestion (CSV / pipe-delimited)**, and be
-hands-on with **Snowflake, dbt, AWS DMS, MWAA**. Here's how the whole thing fits
-together and where each part lives in this repo.
+The platform has two deployment shapes built from **one dbt project**:
+
+- **Local** (docker compose): Postgres 16 as the warehouse, dbt `--target
+  local`, FastAPI serving the marts, React dashboard on top. Zero credentials —
+  see the README quickstart.
+- **Cloud** (AWS + Snowflake): files replicated by **AWS DMS** into S3,
+  ingested with **Snowflake COPY/Snowpipe**, transformed by the same dbt models
+  (`--target dev`), orchestrated by **AWS MWAA** (Airflow), with outbound
+  file generation via `COPY INTO @stage`.
+
+This doc covers the cloud path end to end (it also maps 1:1 to a
+data-engineering JD: ETL/ELT with MWAA + dbt, CSV/pipe-delimited file
+pipelines, hands-on Snowflake/DMS — see `LEARNING.md` for the study guide).
 
 ```
  ┌──────────────┐   full load + CDC     ┌──────────────┐   COPY INTO / Snowpipe   ┌─────────────────────┐

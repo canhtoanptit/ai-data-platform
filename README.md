@@ -1,140 +1,117 @@
-# ANZ Collections Platform — data engineering learning project
+# AI Data Platform
 
-A realistic, small **debt-collections** pipeline covering the full ANZ JD:
-**ETL/ELT with AWS MWAA + dbt**, **file generation & ingestion (CSV +
-pipe-delimited)** on **Snowflake**, and the **AWS DMS** ingestion pattern.
+A full-stack, locally-runnable **data platform**: files land in a warehouse,
+**dbt** transforms them into tested marts, a **FastAPI** layer serves them to
+applications, and a **React** dashboard (in progress) puts them on screen —
+with AI features (natural-language querying over the marts) on the roadmap.
 
-> New here? Read [`ARCHITECTURE.md`](./ARCHITECTURE.md) for how the four tools
-> fit together, then [`LEARNING.md`](./LEARNING.md) — a ~2–3 week path from zero
-> to interview-ready, mapped onto this repo.
+Everything runs on your laptop with `docker compose` — no cloud account, no
+credentials. The same dbt models also deploy unchanged to a **Snowflake / AWS**
+cloud path (DMS ingestion, MWAA orchestration), because the project is written
+cross-database from day one.
 
-## The four JD tools, and where they live
+The demo dataset is a **debt-collections** domain (cases, payments,
+promises-to-pay, agent performance) — realistic enough to make the KPIs and
+CDC patterns meaningful, but the platform itself is domain-agnostic.
 
-| Tool | Role | Folder |
-|------|------|--------|
-| **Snowflake** | Warehouse; file ingest (`COPY`) + generation (`COPY INTO @stage`) | [`snowflake/`](./snowflake) |
-| **dbt** | Transform raw → tested/documented marts | [`anz_banking/`](./anz_banking) |
-| **AWS MWAA** | Managed Airflow orchestrating ingest → dbt → unload | [`airflow/`](./airflow) |
-| **AWS DMS** | Source DB → S3 file replication (concept + runbook) | [`ARCHITECTURE.md`](./ARCHITECTURE.md) |
-
-Plus a **consumption layer** — [`cube/`](./cube) — a Cube semantic layer over the
-gold marts (serving metrics to an app via REST/GraphQL/SQL). See [`ARCHITECTURE.md`](./ARCHITECTURE.md).
-
-## The data model
-
-A collections platform tracks customers who fall behind on payments and the
-work done to recover the debt.
+## Architecture
 
 ```
-seeds (raw CSVs)          staging (views)                 marts (tables)
-─────────────────         ────────────────────            ─────────────────────
-raw_customers        ->   stg_collections__customers  ->  dim_customers
-raw_agents           ->   stg_collections__agents     ->  dim_agents
-raw_accounts         ->   stg_collections__accounts  ┐
-raw_payments         ->   stg_collections__payments  ┤ int_* (ephemeral)
-raw_collection_cases ->   stg_collections__cases     ┼->  fct_collection_cases
-raw_contact_attempts ->   stg_collections__contact.. ┤        └-> collections_performance
-raw_promises_to_pay  ->   stg_collections__promise.. ┘
+                        LOCAL (docker compose)
+┌──────────────┐   dbt seed / COPY   ┌──────────────┐   dbt build    ┌─────────────────┐
+│ raw files    │ ──────────────────► │ Postgres 16  │ ─────────────► │ marts           │
+│ (CSV / pipe) │                     │ (warehouse)  │  staging →     │ dim_* fct_*     │
+└──────────────┘                     └──────────────┘  marts         │ KPI rollups     │
+                                                                     └────────┬────────┘
+                                                                              │
+                                              ┌───────────────────────────────┼─────────┐
+                                              ▼                               ▼         │
+                                     ┌─────────────────┐             ┌────────────────┐ │
+                                     │ FastAPI  :8000  │ ──────────► │ React dashboard│ │
+                                     │ /api/metrics/*  │    JSON     │ (Step 3)       │ │
+                                     │ /api/cases      │             └────────────────┘ │
+                                     └─────────────────┘        AI chat (NL→SQL) planned┘
+
+                        CLOUD (same dbt project, --target dev)
+   source DBs ──AWS DMS──► S3 (CSV/pipe) ──COPY/Snowpipe──► Snowflake ──dbt──► marts
+                                    orchestrated by AWS MWAA (Airflow)
 ```
 
-Key collections concepts modelled: **days past due / delinquency buckets**,
-**cure rate**, **promise-to-pay (PTP) kept rate**, **right-party-contact (RPC)
-rate**, and **agent/team performance**.
+One dbt project, two targets: `local` (Postgres in compose) for development and
+demos, `dev` (Snowflake) for the cloud. Details in
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-## Prerequisites
-
-1. A free [Snowflake trial](https://signup.snowflake.com/) (30 days, no card).
-2. In a Snowflake worksheet, create a database + warehouse to hold the project:
-   ```sql
-   create warehouse if not exists compute_wh with warehouse_size = 'xsmall'
-     auto_suspend = 60 auto_resume = true;
-   create database if not exists anz_collections;
-   ```
-3. `uv` (already used here) and `make`.
-
-## Setup
+## Quickstart (zero credentials)
 
 ```bash
-cp .env.example .env      # then fill in your Snowflake trial details
-make debug                # verify the connection works
-make fresh                # deps + seed + run + snapshot + test  (first run)
-```
+make stack-up      # Postgres 16 + API, waits until healthy
+make local-build   # dbt: seed → staging → marts → snapshot → tests (all local)
 
-After that, day-to-day:
-
-```bash
-make build     # rebuild + test everything
-make docs      # browse the model DAG + docs at http://localhost:8080
-```
-
-### Run locally (Postgres + Docker)
-
-No Snowflake trial, no credentials, no internet? Snowflake can't run on a
-laptop, so [`docker-compose.yml`](./docker-compose.yml) provides a **Postgres 16**
-stand-in. The same models, seeds, snapshot and tests build against it via the
-`local` target — the project is written to be cross-database.
-
-```bash
-make local-up      # start Postgres 16 in Docker, wait until healthy
-make local-build   # dbt build --target local  (seed + run + snapshot + test)
-```
-
-`make local-down` stops it (the data volume survives). Also available:
-`make local-run`, `make local-test`.
-
-Defaults need **no `.env` changes** — `.dbt/profiles.yml` defaults every
-`POSTGRES_*` var to the compose values (`platform`/`platform`/`platform` on
-`localhost:5432`). Objects land in:
-
-| Schema | Contents |
-|--------|----------|
-| `analytics_raw` | seeds |
-| `analytics_staging` | `stg_*` views |
-| `analytics_marts` | `dim_*`, `fct_*`, `collections_performance` tables |
-| `analytics` | `int_accounts_cdc` (the incremental CDC model) |
-| `snapshots` | `collection_cases_snapshot` |
-
-The `analytics_*` prefixing is dbt's default `generate_schema_name` combining the
-target's base schema with each layer's `+schema`. Snowflake (`dev`) stays the
-default target and behaves identically, prefixed with your `SNOWFLAKE_SCHEMA`.
-
-#### API
-
-[`api/`](./api) is a **FastAPI** read layer that serves the marts as REST — the
-consumption layer an app or agent would call. `make stack-up` brings up Postgres
-**and** the API together:
-
-```bash
-make stack-up                                   # docker compose up -d --wait
 curl -s localhost:8000/api/metrics/summary
 # {"total_cases":8,"open_cases":4,"total_delinquent_amount":16630.75,
 #  "cure_rate_pct":25.0,"ptp_kept_rate_pct":50.0,"rpc_rate_pct":35.3}
 ```
 
-Endpoints: `/api/health`, `/api/metrics/summary`, `/api/metrics/performance`,
-`/api/cases` (filter by `status`/`bucket`, paged), `/api/cases/{case_id}`. Swagger
-UI at <http://localhost:8000/docs>. Also `make api-dev` (autoreload) and
-`make api-test`; `make stack-down` stops everything. Details in
-[`api/README.md`](./api/README.md).
+Swagger UI: <http://localhost:8000/docs> · dbt lineage docs: `make docs` ·
+stop everything: `make stack-down` (the data volume survives).
 
-## Layout
+Where dbt puts things in Postgres (base schema `analytics`, prefixing via dbt's
+default `generate_schema_name`):
 
-| Path | What it is |
-|------|-----------|
-| `.env` / `.env.example` | Snowflake credentials (env vars used by `profiles.yml`) |
-| `.dbt/profiles.yml` | dbt connection profiles: `dev` (Snowflake) + `local` (Postgres) |
-| `docker-compose.yml` | Local Postgres warehouse + the API service |
-| `api/` | FastAPI read layer serving the marts as REST (own uv project) |
-| `Makefile` | Thin wrapper around `uv run --env-file .env dbt …` |
-| `anz_banking/` | The dbt project |
-| `anz_banking/seeds/` | Sample raw data as CSVs |
-| `anz_banking/models/staging/` | 1:1 cleaned views over sources |
-| `anz_banking/models/intermediate/` | Reusable ephemeral building blocks |
-| `anz_banking/models/marts/` | Dimensions, facts, and the KPI mart |
-| `anz_banking/snapshots/` | SCD2 history of case status |
-| `anz_banking/macros/` | Reusable SQL (delinquency bucket logic) |
-| `anz_banking/tests/` | A singular (bespoke) data test |
-| `snowflake/` | `COPY INTO` ingestion + generation scripts (CSV & pipe) |
-| `airflow/` | MWAA-shaped Airflow DAG orchestrating the pipeline |
-| `ARCHITECTURE.md` | End-to-end diagram + AWS DMS explainer |
-| `LEARNING.md` | Step-by-step learning path across all four tools |
+| Schema | Contents |
+|--------|----------|
+| `analytics_raw` | seeds (raw CSVs) |
+| `analytics_staging` | `stg_*` cleaned views |
+| `analytics_marts` | `dim_*`, `fct_*`, `collections_performance` |
+| `analytics` | `int_accounts_cdc` (incremental CDC merge model) |
+| `snapshots` | SCD2 history |
+
+## Components
+
+| Component | What it does | Where |
+|-----------|--------------|-------|
+| **dbt project** | seeds → staging → intermediate → marts; tests, docs, SCD2 snapshot, macros, a DMS-style CDC incremental merge | [`anz_banking/`](./anz_banking) |
+| **Local warehouse** | Postgres 16 in compose; dbt `local` target | [`docker-compose.yml`](./docker-compose.yml) |
+| **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases` | [`api/`](./api) |
+| **Web** | React + TypeScript dashboard | `web/` *(Step 3 — in progress)* |
+| **Cloud warehouse path** | Snowflake `COPY INTO` ingestion + file generation (CSV & pipe-delimited) | [`snowflake/`](./snowflake) |
+| **Orchestration** | Airflow DAG (ingest → dbt build → unload), written MWAA-deployable | [`airflow/`](./airflow) |
+| **Semantic layer** | Cube models over the marts (metrics API alternative) | [`cube/`](./cube) |
+
+Each component folder has its own README.
+
+## Cloud path (Snowflake)
+
+The same models run on a free [Snowflake trial](https://signup.snowflake.com/):
+
+```bash
+cp .env.example .env   # fill in your Snowflake details
+make debug             # check the connection
+make fresh             # deps + full build against Snowflake
+```
+
+Setup SQL lives in [`snowflake/01_account_setup.sql`](./snowflake/01_account_setup.sql);
+the DMS → S3 → Snowflake ingestion architecture is covered in
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
+## Roadmap
+
+- [x] Cross-database dbt project (Postgres local / Snowflake cloud)
+- [x] CDC merge model (DMS-style I/U/D stream → current state)
+- [x] FastAPI read layer over the marts
+- [ ] React + TypeScript dashboard
+- [ ] Data catalog + lineage explorer (parsed from dbt artifacts)
+- [ ] Pipeline observability (dbt run/test results)
+- [ ] AI chat: natural language → SQL over the marts (Claude API)
+- [ ] File-upload ingestion UI (CSV / pipe-delimited)
+- [ ] Airflow service in compose orchestrating the full loop
+
+## Learning docs
+
+This repo doubles as a study project for data-platform engineering
+(dbt, Snowflake, AWS DMS/MWAA, serving layers):
+
+- [`LEARNING.md`](./LEARNING.md) — a milestone-based path with hands-on
+  exercises and interview soundbites.
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — the end-to-end design, the DMS/CDC
+  explainer, and the consumption-layer decision guide.
