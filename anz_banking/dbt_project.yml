@@ -1,7 +1,8 @@
 name: 'anz_banking'
 version: '1.0.0'
 
-# The profile in .dbt/profiles.yml that dbt uses to connect to Snowflake.
+# The profile in .dbt/profiles.yml that dbt connects with. It has two targets:
+# `dev` (Snowflake, the default) and `local` (Postgres in docker-compose).
 profile: 'anz_banking'
 
 # Where dbt looks for each type of file. These are the defaults.
@@ -31,26 +32,30 @@ models:
       +materialized: table
       +schema: marts
 
-# Seeds land in a dedicated schema and we type a few columns explicitly so
-# Snowflake doesn't guess (e.g. keep money as NUMBER, ids as INT).
+# Seeds land in a dedicated schema and we type a few columns explicitly so the
+# warehouse doesn't guess (e.g. keep money as fixed-point, ids as INT).
+# Types are spelled portably so the same seeds load on Snowflake AND Postgres:
+#   numeric(12,2) -- Snowflake synonym for NUMBER, native Postgres type
+#   timestamp     -- Snowflake TIMESTAMP defaults to NTZ; Postgres has no
+#                    TIMESTAMP_NTZ type name
 seeds:
   anz_banking:
     +schema: raw
     raw_accounts:
       +column_types:
-        credit_limit: number(12,2)
-        current_balance: number(12,2)
+        credit_limit: numeric(12,2)
+        current_balance: numeric(12,2)
     raw_payments:
       +column_types:
-        amount: number(12,2)
+        amount: numeric(12,2)
     raw_collection_cases:
       +column_types:
-        delinquent_amount: number(12,2)
+        delinquent_amount: numeric(12,2)
     raw_promises_to_pay:
       +column_types:
-        promised_amount: number(12,2)
+        promised_amount: numeric(12,2)
     raw_accounts_cdc:
       +column_types:
-        cdc_timestamp: timestamp_ntz
-        credit_limit: number(12,2)
-        current_balance: number(12,2)
+        cdc_timestamp: timestamp
+        credit_limit: numeric(12,2)
+        current_balance: numeric(12,2)

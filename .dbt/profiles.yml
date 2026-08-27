@@ -1,4 +1,6 @@
 anz_banking:
+  # `dev` (Snowflake) stays the default target. Use `--target local` (or the
+  # `make local-*` targets) to build against the Postgres container instead.
   target: dev
 
   outputs:
@@ -11,4 +13,26 @@ anz_banking:
       database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
       warehouse: "{{ env_var('SNOWFLAKE_WAREHOUSE') }}"
       schema: "{{ env_var('SNOWFLAKE_SCHEMA') }}"
+      threads: 4
+
+    # Local Postgres from the root docker-compose.yml. Every env_var here has a
+    # default matching the compose service, so `--target local` works with no
+    # .env changes -- you only set POSTGRES_* if you customise the container.
+    #
+    # Base schema `analytics` + dbt's default generate_schema_name (which
+    # prefixes custom schemas with the base one) means objects land in:
+    #   analytics            -> int_accounts_cdc (intermediate, no +schema)
+    #   analytics_staging    -> stg_* views
+    #   analytics_marts      -> dim_*/fct_*/collections_performance tables
+    #   analytics_raw        -> seeds
+    #   snapshots            -> collection_cases_snapshot (snapshot
+    #                           target_schema is absolute, never prefixed)
+    local:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | int }}"
+      user: "{{ env_var('POSTGRES_USER', 'platform') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', 'platform') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'platform') }}"
+      schema: "{{ env_var('POSTGRES_SCHEMA', 'analytics') }}"
       threads: 4

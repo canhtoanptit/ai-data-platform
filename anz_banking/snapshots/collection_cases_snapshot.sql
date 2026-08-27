@@ -19,6 +19,10 @@
     )
 }}
 
+-- These raw tables are loaded by `dbt seed`, but source() creates no DAG edge to
+-- the seed, so `dbt build` would race it. A ref() inside a comment adds the edge
+-- (seed runs first) without changing the compiled SQL.
+-- depends_on: {{ ref('raw_collection_cases') }}
 select
     case_id,
     account_id,

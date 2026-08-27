@@ -1,0 +1,34 @@
+# Local warehouse for the dbt project.
+#
+# Snowflake can't run on a laptop, so Postgres stands in as a local target you
+# can spin up, break, and throw away. The dbt project builds against BOTH:
+#   `make build`        -> Snowflake (target: dev)
+#   `make local-build`  -> this container (target: local)
+#
+# Defaults below match the `local` output in .dbt/profiles.yml, so
+# `make local-up && make local-build` works with no .env changes at all.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: anz_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-platform}
+      POSTGRES_USER: ${POSTGRES_USER:-platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-platform}
+    ports:
+      # host:container — host port is overridable in case 5432 is taken locally.
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `make local-up` waits on this before handing off to dbt.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-platform} -d ${POSTGRES_DB:-platform}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -6,7 +6,11 @@ version: 2
 sources:
   - name: collections
     description: Raw collections-platform tables landed into the raw schema.
-    schema: raw
+    # `dbt seed` puts these in <target.schema>_raw, because dbt's default
+    # generate_schema_name prefixes the custom schema (+schema: raw in
+    # dbt_project.yml) with the target's base schema. The source has to point at
+    # the same place, so render it from the target rather than hardcoding "raw".
+    schema: "{{ target.schema }}_raw"
     tables:
       - name: raw_customers
       - name: raw_agents

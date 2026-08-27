@@ -67,12 +67,44 @@ make build     # rebuild + test everything
 make docs      # browse the model DAG + docs at http://localhost:8080
 ```
 
+### Run locally (Postgres + Docker)
+
+No Snowflake trial, no credentials, no internet? Snowflake can't run on a
+laptop, so [`docker-compose.yml`](./docker-compose.yml) provides a **Postgres 16**
+stand-in. The same models, seeds, snapshot and tests build against it via the
+`local` target — the project is written to be cross-database.
+
+```bash
+make local-up      # start Postgres 16 in Docker, wait until healthy
+make local-build   # dbt build --target local  (seed + run + snapshot + test)
+```
+
+`make local-down` stops it (the data volume survives). Also available:
+`make local-run`, `make local-test`.
+
+Defaults need **no `.env` changes** — `.dbt/profiles.yml` defaults every
+`POSTGRES_*` var to the compose values (`platform`/`platform`/`platform` on
+`localhost:5432`). Objects land in:
+
+| Schema | Contents |
+|--------|----------|
+| `analytics_raw` | seeds |
+| `analytics_staging` | `stg_*` views |
+| `analytics_marts` | `dim_*`, `fct_*`, `collections_performance` tables |
+| `analytics` | `int_accounts_cdc` (the incremental CDC model) |
+| `snapshots` | `collection_cases_snapshot` |
+
+The `analytics_*` prefixing is dbt's default `generate_schema_name` combining the
+target's base schema with each layer's `+schema`. Snowflake (`dev`) stays the
+default target and behaves identically, prefixed with your `SNOWFLAKE_SCHEMA`.
+
 ## Layout
 
 | Path | What it is |
 |------|-----------|
 | `.env` / `.env.example` | Snowflake credentials (env vars used by `profiles.yml`) |
-| `.dbt/profiles.yml` | dbt connection profile (reads the env vars) |
+| `.dbt/profiles.yml` | dbt connection profiles: `dev` (Snowflake) + `local` (Postgres) |
+| `docker-compose.yml` | Local Postgres warehouse for `--target local` |
 | `Makefile` | Thin wrapper around `uv run --env-file .env dbt …` |
 | `anz_banking/` | The dbt project |
 | `anz_banking/seeds/` | Sample raw data as CSVs |
