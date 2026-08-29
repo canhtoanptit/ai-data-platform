@@ -1,7 +1,8 @@
 /**
- * Mirrors `api/app/schemas.py`. Kept hand-written rather than generated from the
- * OpenAPI schema: the surface is five endpoints, and a hand-written file is one
- * less build step to explain. If the API grows, generate it.
+ * Mirrors `api/app/schemas.py` and `api/app/schemas_catalog.py`. Kept
+ * hand-written rather than generated from the OpenAPI schema: the surface is a
+ * handful of endpoints, and a hand-written file is one less build step to
+ * explain. If the API grows, generate it.
  *
  * Two conventions carried over from the Pydantic models:
  *  - money and rates are `number` (the API serialises them as JSON numbers, not
@@ -61,4 +62,110 @@ export interface Case {
   rpc_count: number
   ptp_count: number
   ptp_kept_count: number
+}
+
+/* --- dbt metadata (api/app/schemas_catalog.py) -------------------------------
+ *
+ * These come from dbt's build artifacts, not from the warehouse: manifest.json
+ * (the DAG, docs, tests), catalog.json (warehouse column types) and
+ * run_results.json (last run status). Every endpoint below answers 503 when the
+ * artifacts are missing — see ApiError in client.ts.
+ */
+
+/**
+ * Where a node sits in the pipeline. `staging | intermediate | marts` come from
+ * the model's folder; the rest from its dbt resource type. `unknown` is what a
+ * model in some other folder gets — it stays visible rather than vanishing.
+ */
+export type Layer =
+  | 'source'
+  | 'seed'
+  | 'staging'
+  | 'intermediate'
+  | 'marts'
+  | 'snapshot'
+  | 'unknown'
+
+/** A row in the catalog listing: one dbt model, seed or snapshot. */
+export interface ModelSummary {
+  unique_id: string
+  name: string
+  resource_type: string
+  layer: Layer
+  schema: string
+  materialization: string
+  /** Empty string when the model has no `description:` in its .yml. */
+  description: string
+  column_count: number
+  test_count: number
+}
+
+/** One column, merged from the manifest (docs, tests) and catalog (type). */
+export interface NodeColumn {
+  name: string
+  /** null until `dbt docs generate` has run, and for ephemeral models. */
+  data_type: string | null
+  description: string | null
+  tests: string[]
+}
+
+export interface ModelDetail extends ModelSummary {
+  columns: NodeColumn[]
+  /** Tests on the model as a whole rather than on one column. */
+  table_tests: string[]
+  depends_on: string[]
+  referenced_by: string[]
+  raw_sql: string | null
+  /** null for seeds (a CSV has no SQL) and for models that never compiled. */
+  compiled_sql: string | null
+}
+
+export interface LineageNode {
+  /** dbt unique_id, e.g. `model.anz_banking.fct_collection_cases`. */
+  id: string
+  name: string
+  resource_type: string
+  layer: Layer
+}
+
+export interface LineageEdge {
+  source: string
+  target: string
+}
+
+export interface Lineage {
+  nodes: LineageNode[]
+  edges: LineageEdge[]
+}
+
+/**
+ * dbt statuses are two enums, not one: models/seeds/snapshots report
+ * success/error/skipped, tests report pass/fail/warn. Both are tallied here so
+ * the UI can say "21 built, 39 passed" without knowing which is which.
+ */
+export interface RunCounts {
+  success: number
+  error: number
+  skipped: number
+  pass: number
+  fail: number
+  warn: number
+}
+
+export interface RunResultRow {
+  unique_id: string
+  name: string
+  resource_type: string
+  status: string
+  /** Seconds. */
+  execution_time: number
+  message: string | null
+}
+
+export interface LatestRun {
+  /** ISO 8601 UTC, when dbt wrote run_results.json. */
+  generated_at: string
+  elapsed_total: number
+  counts: RunCounts
+  results: RunResultRow[]
 }

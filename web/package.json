@@ -13,13 +13,17 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
+    "@xyflow/react": "^12.11.3",
+    "dagre": "^0.8.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
     "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
+    "@types/dagre": "^0.7.54",
     "@types/node": "^26.2.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",

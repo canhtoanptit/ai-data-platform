@@ -15,6 +15,17 @@ Interactive docs (Swagger UI) come free at <http://localhost:8000/docs>.
 | `GET` | `/api/metrics/performance` | List | Rows of the `collections_performance` mart — the same KPIs split by team × delinquency bucket. |
 | `GET` | `/api/cases` | List | `fct_collection_cases`, newest `opened_date` first. |
 | `GET` | `/api/cases/{case_id}` | One object | `404` if the case doesn't exist. |
+| `GET` | `/api/agents` | List | `dim_agents`, ordered by team. |
+
+And the metadata endpoints, which read dbt's **artifacts** rather than the
+warehouse (see below):
+
+| Method | Path | Returns | Notes |
+|--------|------|---------|-------|
+| `GET` | `/api/catalog/models` | List | Every model, seed and snapshot: layer, schema, materialization, description, column and test counts. |
+| `GET` | `/api/catalog/models/{name}` | One object | Adds columns (name, warehouse type, description, tests), `depends_on` / `referenced_by`, and the raw + compiled SQL. `404` if unknown. |
+| `GET` | `/api/catalog/lineage` | `{nodes, edges}` | The whole DAG — sources, seeds, models, snapshots. Tests excluded. |
+| `GET` | `/api/runs/latest` | One object | Last `dbt build`: `counts` plus a row per executed node. |
 
 `/api/cases` query params:
 
@@ -32,7 +43,54 @@ curl -s localhost:8000/api/metrics/summary
 
 curl -s 'localhost:8000/api/cases?status=open&limit=5'
 curl -s localhost:8000/api/cases/7001
+
+curl -s localhost:8000/api/runs/latest | jq .counts
+# {"success":21,"error":0,"skipped":0,"pass":39,"fail":0,"warn":0}
 ```
+
+## The metadata half: reading dbt's artifacts
+
+`/api/catalog/*` and `/api/runs/*` never touch Postgres. Their source is the
+JSON dbt writes into `anz_banking/target/`:
+
+| File | Written by | What is taken from it |
+|------|-----------|----------------------|
+| `manifest.json` | any dbt command | the DAG, docs, declared columns, tests, raw + compiled SQL |
+| `run_results.json` | `dbt build` / `run` / `test` | per-node status and timing |
+| `catalog.json` | `dbt docs generate` | the real warehouse column types |
+
+So the catalog is *generated from the pipeline*, not maintained beside it — the
+thing that makes a dbt-based catalog worth having.
+
+[`app/dbt_artifacts.py`](./app/dbt_artifacts.py) opens them read-only and caches
+the parsed JSON **keyed on file mtime**: manifest.json is ~900 KB, so re-reading
+it per request would be wasteful, but caching forever would mean a
+`make local-build` in another terminal has no effect until the API restarts.
+
+A missing file raises `ArtifactsUnavailable`, which `main.py` turns into a
+**503** carrying the fix (`run make local-build && make local-docs`) — a
+temporary condition, not a server error, and the dashboard renders it as an
+empty state rather than a crash.
+
+Four things about dbt's artifacts that the code has to know:
+
+- **Ephemeral models are in the manifest but not in run_results.** dbt compiles
+  them into their consumers as CTEs instead of executing them, so this project's
+  63 nodes produce 60 results. They *are* in the catalog and the lineage graph —
+  they are real nodes with real edges.
+- **Manifest columns ≠ warehouse columns.** The manifest lists only columns
+  documented in a `.yml` (3 of `fct_collection_cases`' 18); catalog.json lists
+  all 18 with types but no descriptions. The detail endpoint unions them,
+  matching case-insensitively because Postgres reports lower-case column names
+  and Snowflake upper-case.
+- **Tests are attributed by `attached_node`, not by `depends_on`.** A
+  `relationships` test depends on two models — the child it is declared on and
+  the parent it points at — so `depends_on` would count it twice. The test suite
+  asserts the totals: 39 tests, 39 attributions.
+- **`dbt docs generate` clobbers run_results.json.** It runs a compile pass
+  first and overwrites the file with compile results — every node "success",
+  no test pass/fail left. `make local-docs` passes `--no-compile` for exactly
+  this reason.
 
 ## Running it
 
@@ -74,6 +132,13 @@ so it runs with no `.env` at all.
 | `POSTGRES_USER` | `platform` | |
 | `POSTGRES_PASSWORD` | `platform` | |
 | `MARTS_SCHEMA` | `analytics_marts` | where dbt's gold layer lands |
+| `DBT_ARTIFACTS_DIR` | `../anz_banking/target` | resolved from the *file's* location, not the cwd; compose overrides it to `/srv/dbt-target` |
+
+`DBT_ARTIFACTS_DIR`'s default is deliberately wrong inside Docker: the app is
+installed into site-packages, where there is no repo above it. Compose
+bind-mounts the same directory in **read-only** — the artifacts are build
+outputs owned by whoever ran `make local-build`, and the API only ever reads
+them.
 
 The same `POSTGRES_*` names the dbt project uses, on purpose: one set of vars for
 the whole stack. Note the host difference — from your laptop the warehouse is
@@ -84,13 +149,19 @@ the whole stack. Note the host difference — from your laptop the warehouse is
 
 ```
 app/
-  config.py           settings + the SQLAlchemy URL
-  db.py               engine (pool_pre_ping) + the per-request connection dependency
-  schemas.py          pydantic response models
-  routers/metrics.py  /api/metrics/*
-  routers/cases.py    /api/cases/*
-  main.py             app factory, CORS, /api/health
-tests/test_api.py     integration tests against the real local warehouse
+  config.py            settings + the SQLAlchemy URL + the artifacts path
+  db.py                engine (pool_pre_ping) + the per-request connection dependency
+  dbt_artifacts.py     mtime-cached loader for manifest / run_results / catalog
+  schemas.py           pydantic response models for the mart rows
+  schemas_catalog.py   pydantic response models for the dbt metadata
+  routers/metrics.py   /api/metrics/*
+  routers/cases.py     /api/cases/*
+  routers/agents.py    /api/agents
+  routers/catalog.py   /api/catalog/*   (manifest + catalog.json)
+  routers/runs.py      /api/runs/latest (run_results.json)
+  main.py              app factory, CORS, /api/health, the 503 handler
+tests/test_api.py      integration tests against the real local warehouse
+tests/test_catalog.py  integration tests against the real dbt artifacts
 ```
 
 **Why parameterised `text()` SQL and no ORM.** The marts *are* dbt's contract —
@@ -114,5 +185,12 @@ Postgres, because the thing worth testing is that the SQL matches what dbt built
 — a mocked database would happily agree with SQL no warehouse accepts. The suite
 skips itself (rather than failing) if the warehouse is unreachable.
 
-The expected numbers are the committed seeds in `anz_banking/seeds/` (8 cases).
-Change a seed, change the assertions.
+`tests/test_catalog.py` is the same bargain one level up: it runs against the
+**real** artifacts, not a committed fixture manifest, because a fixture would
+drift from the dbt project the moment a model moved folders — and agreeing with
+the real project is the entire job of those endpoints. It skips itself if the
+artifacts are missing.
+
+The expected numbers are the committed dbt project: 8 cases in
+`anz_banking/seeds/`, 24 catalogued nodes, 39 tests, 60 run results. Change a
+seed or add a model, change the assertions.

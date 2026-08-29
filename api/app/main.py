@@ -1,16 +1,21 @@
-"""App factory and the health endpoint.
+"""App factory, the health endpoint, and the artifacts-missing handler.
 
 Serves the dbt-built `analytics_marts` tables as a read-only REST API — the
-consumption layer a dashboard or agent would sit on top of.
+consumption layer a dashboard or agent would sit on top of. Two kinds of
+endpoint live behind it: the mart readers (`/api/metrics`, `/api/cases`,
+`/api/agents`) query Postgres, and the metadata readers (`/api/catalog`,
+`/api/runs`) parse the JSON artifacts dbt writes to `anz_banking/target/`.
 """
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .db import engine
-from .routers import agents, cases, metrics
+from .dbt_artifacts import ArtifactsUnavailable
+from .routers import agents, cases, catalog, metrics, runs
 from .schemas import Health
 
 # Local dev servers for a front end: Vite (5173) and Next/CRA (3000). Kept as an
@@ -40,6 +45,22 @@ def health() -> Health:
     return Health(status="ok", database="ok")
 
 
+def artifacts_unavailable_handler(
+    _request: Request, exc: Exception
+) -> JSONResponse:
+    """Turn "dbt hasn't run yet" into a 503 with instructions.
+
+    503, not 500: the endpoint is fine, its input file just isn't there yet, and
+    the fix is one make target away. Registered once here rather than as a
+    try/except in every catalog and runs endpoint. The signature takes a bare
+    `Exception` because that is what Starlette's handler protocol declares.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": str(exc)},
+    )
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="ANZ Collections API",
@@ -53,10 +74,13 @@ def create_app() -> FastAPI:
         allow_methods=["GET"],
         allow_headers=["*"],
     )
+    app.add_exception_handler(ArtifactsUnavailable, artifacts_unavailable_handler)
     app.include_router(health_router)
     app.include_router(metrics.router)
     app.include_router(cases.router)
     app.include_router(agents.router)
+    app.include_router(catalog.router)
+    app.include_router(runs.router)
     return app
 
 

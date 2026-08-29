@@ -270,3 +270,361 @@ p {
 .state--error {
   color: var(--critical);
 }
+
+/* --- nav ------------------------------------------------------------------ */
+
+.nav {
+  border-top: 1px solid var(--border);
+}
+
+.nav__inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.nav__link {
+  padding: 12px 14px;
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 0.9375rem;
+  white-space: nowrap;
+  /* Transparent, not absent: the active link swaps the colour rather than
+     adding a border, so nothing shifts by 2px when you change page. */
+  border-bottom: 2px solid transparent;
+}
+
+.nav__link:hover {
+  color: var(--ink);
+}
+
+.nav__link--active {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--ink);
+}
+
+/* --- catalog -------------------------------------------------------------- */
+
+/* Stacked on a phone, list-beside-detail once there is room for both. */
+.catalog {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .catalog {
+    grid-template-columns: 320px 1fr;
+  }
+}
+
+.search {
+  font: inherit;
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  color: var(--ink);
+  background: var(--plane);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.catalog__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* The list is 24 items and the detail panel is long; cap it so the two
+     columns stay side by side instead of the page scrolling past the detail. */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.catalog__item {
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.catalog__item:hover {
+  background: var(--plane);
+}
+
+.catalog__item--active {
+  background: var(--plane);
+  box-shadow: inset 2px 0 0 var(--ink);
+}
+
+.catalog__name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+}
+
+.catalog__counts {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+/* --- chips and badges ----------------------------------------------------- */
+
+/* Layer chips get their colours inline from lib/palette.ts — see Badges.tsx. */
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  margin-right: 4px;
+  border-radius: 999px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  background: var(--grid);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.chip--test {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  /* Tinted background + saturated text rather than a solid fill: it keeps the
+     text contrast comfortable and the table from looking like a traffic jam. */
+  background: var(--grid);
+  color: var(--ink-2);
+}
+
+.badge--good {
+  background: rgba(12, 163, 12, 0.12);
+  color: #0a7a0a;
+}
+
+.badge--bad {
+  background: rgba(208, 59, 59, 0.12);
+  color: var(--critical);
+}
+
+.badge--warn {
+  background: rgba(176, 125, 46, 0.14);
+  color: #8a6122;
+}
+
+/* --- model detail --------------------------------------------------------- */
+
+.detail__meta {
+  margin-bottom: 12px;
+}
+
+.detail__description {
+  color: var(--ink-2);
+  font-size: 0.9375rem;
+  margin-bottom: 16px;
+  max-width: 70ch;
+}
+
+.detail__grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--plane);
+}
+
+.detail__label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-muted);
+}
+
+.detail__value {
+  margin-top: 4px;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.detail__value--muted {
+  color: var(--ink-muted);
+}
+
+.detail__tabletests {
+  margin-bottom: 12px;
+  font-size: 0.8125rem;
+}
+
+.link-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  font-size: 0.8125rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.link-list a {
+  color: #2a78d6;
+}
+
+/* --- code blocks ---------------------------------------------------------- */
+
+.sql {
+  margin-top: 14px;
+}
+
+.sql summary {
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+  padding: 6px 0;
+}
+
+.code {
+  margin: 8px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--plane);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  /* SQL has meaningful line breaks and long lines; scroll it rather than
+     wrapping, which would make the indentation lie. */
+  overflow-x: auto;
+}
+
+.code--inline {
+  display: inline-block;
+  padding: 6px 10px;
+  font-size: 0.8125rem;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+}
+
+/* The table default is nowrap so figures line up; descriptions need the room. */
+.table td.wrap {
+  white-space: normal;
+  min-width: 220px;
+  color: var(--ink-2);
+}
+
+/* --- lineage -------------------------------------------------------------- */
+
+.lineage {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .lineage {
+    grid-template-columns: 1fr 240px;
+  }
+}
+
+/* React Flow measures its parent, so the height has to be set here — same
+   reason as .chart above. */
+.lineage__canvas {
+  height: 620px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--plane);
+}
+
+.lineage__info {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--plane);
+  font-size: 0.8125rem;
+}
+
+.lineage__info-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875rem;
+  margin: 4px 0 8px;
+  word-break: break-word;
+}
+
+.lineage__info-id {
+  color: var(--ink-muted);
+  font-size: 0.6875rem;
+  margin: 10px 0;
+  word-break: break-all;
+}
+
+.lineage__info a {
+  color: #2a78d6;
+}
+
+.legend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* --- runs ----------------------------------------------------------------- */
+
+.tile__value--bad {
+  color: var(--critical);
+}
+
+/* dbt's failure message, under the node name it belongs to. */
+.run__message {
+  display: block;
+  margin-top: 4px;
+  font-family: system-ui, sans-serif;
+  font-size: 0.75rem;
+  color: var(--critical);
+  white-space: normal;
+  max-width: 52ch;
+}
+
+/* --- empty state (503: no dbt artifacts yet) ------------------------------ */
+
+.empty {
+  padding: 24px 0;
+  max-width: 60ch;
+}
+
+.empty__title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.empty__body {
+  color: var(--ink-2);
+  font-size: 0.875rem;
+}
+
+.empty__detail {
+  margin-top: 12px;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}

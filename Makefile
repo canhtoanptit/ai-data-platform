@@ -6,7 +6,7 @@ DBT   := uv run --env-file .env dbt
 FLAGS := --project-dir anz_banking --profiles-dir .dbt
 
 .PHONY: help deps debug seed run test build snapshot docs clean fresh \
-        local-up local-build local-run local-test local-down \
+        local-up local-build local-run local-test local-docs local-down \
         api-dev api-test web-dev web-test stack-up stack-down
 
 help:            ## Show this help
@@ -59,6 +59,16 @@ local-run:       ## Build all models against local Postgres
 
 local-test:      ## Run all data tests against local Postgres
 	$(DBT) test $(FLAGS) $(LOCAL)
+
+local-docs:      ## Generate catalog.json (warehouse column types) for the catalog page
+	# --no-compile matters. Without it, `docs generate` runs a compile pass and
+	# overwrites run_results.json with *compile* results — every node "success",
+	# execution times of a few ms, and the 39 test pass/fail statuses gone. That
+	# would silently gut the /runs observability page. --no-compile leaves the
+	# build's run_results.json (and its compiled SQL in manifest.json) alone and
+	# only writes catalog.json, so `local-build` then `local-docs` gives the API
+	# all three artifacts with the numbers you actually ran.
+	$(DBT) docs generate $(FLAGS) $(LOCAL) --no-compile
 
 local-down:      ## Stop the local Postgres warehouse (keeps the data volume)
 	docker compose down

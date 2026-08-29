@@ -58,3 +58,34 @@ export function humanize(value: string | null): string {
   const spaced = value.replace(/_/g, ' ')
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
+
+/** `1.267` -> `1.27s`, `0.0053` -> `5ms`. dbt reports execution time in seconds. */
+export function formatSeconds(value: number | null): string {
+  if (value == null) return NO_VALUE
+  // Sub-100ms steps are the common case in a local build, and "0.01s" for all
+  // of them hides the differences between them.
+  if (value < 0.1) return `${Math.round(value * 1000)}ms`
+  return `${value.toFixed(2)}s`
+}
+
+/**
+ * An ISO timestamp as "28 Aug 2026, 13:55" in the reader's own timezone.
+ *
+ * dbt writes UTC with a trailing `Z`... except when it doesn't: some artifact
+ * versions omit the offset entirely, and `new Date()` then reads the string as
+ * *local* time, silently shifting the answer by hours. So a bare timestamp gets
+ * the Z it meant.
+ */
+export function formatTimestamp(value: string | null): string {
+  if (!value) return NO_VALUE
+  const normalized = /(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
+  const parsed = new Date(normalized)
+  if (Number.isNaN(parsed.getTime())) return value
+  return parsed.toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}

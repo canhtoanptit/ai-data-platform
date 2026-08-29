@@ -6,9 +6,23 @@ warehouse with no .env file at all. In Docker, compose overrides POSTGRES_HOST.
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
+
+# Where dbt drops manifest.json / run_results.json / catalog.json.
+#
+# Resolved from THIS FILE's location, not from the working directory: the
+# artifacts live at a fixed spot relative to the repo, while the cwd depends on
+# whether you ran `uv run uvicorn` from api/ or `pytest` from somewhere else.
+# app/config.py -> app/ -> api/ -> repo root.
+#
+# In Docker this default is wrong on purpose — the package is installed into
+# site-packages, so there is no repo above it. Compose mounts the same directory
+# in and sets DBT_ARTIFACTS_DIR to it.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ARTIFACTS_DIR = _REPO_ROOT / "anz_banking" / "target"
 
 
 class Settings(BaseSettings):
@@ -25,6 +39,10 @@ class Settings(BaseSettings):
 
     # Where dbt lands the gold layer: base schema `analytics` + mart `+schema`.
     marts_schema: str = "analytics_marts"
+
+    # Read-only: the catalog/lineage/runs endpoints parse the JSON dbt writes
+    # here. See dbt_artifacts.py.
+    dbt_artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR
 
     @property
     def database_url(self) -> URL:

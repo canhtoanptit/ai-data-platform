@@ -46,14 +46,33 @@ demos, `dev` (Snowflake) for the cloud. Details in
 ```bash
 make stack-up      # Postgres 16 + API + dashboard, waits until healthy
 make local-build   # dbt: seed → staging → marts → snapshot → tests (all local)
+make local-docs    # dbt catalog.json — column types for the catalog page
 
 curl -s localhost:8000/api/metrics/summary
 # {"total_cases":8,"open_cases":4,"total_delinquent_amount":16630.75,
 #  "cure_rate_pct":25.0,"ptp_kept_rate_pct":50.0,"rpc_rate_pct":35.3}
 ```
 
-Then open the dashboard at <http://localhost:3000> — KPI tiles, charts and the
-case table, straight off those endpoints.
+Then open the dashboard at <http://localhost:3000>. Four pages:
+
+| Page | What it shows | Reads |
+|------|---------------|-------|
+| **Dashboard** | KPI tiles, charts, the case table | the marts, via `/api/metrics/*` |
+| **Catalog** | Every model/seed/snapshot with its docs, columns, types, tests and SQL | `manifest.json` + `catalog.json` |
+| **Lineage** | The DAG, laid out left to right, colour-coded by layer | `manifest.json` |
+| **Runs** | Last `dbt build`: what passed, what failed, how long | `run_results.json` |
+
+The last three are the *metadata* half of the platform: they read the JSON
+artifacts dbt writes to `anz_banking/target/` rather than the warehouse, so the
+catalog is generated from the pipeline instead of maintained beside it. The API
+container gets them through a read-only bind mount (`docker-compose.yml`) and
+re-reads on file mtime — rebuild the dbt project and the pages update on the
+next request, no restart. Until `make local-build` has run they answer `503`
+with instructions, which the UI shows as an empty state.
+
+> `make local-docs` runs `dbt docs generate --no-compile`. The `--no-compile`
+> is load-bearing: without it, `docs generate` overwrites `run_results.json`
+> with *compile* results and the Runs page loses every real test status.
 
 Swagger UI: <http://localhost:8000/docs> · dbt lineage docs: `make docs` ·
 stop everything: `make stack-down` (the data volume survives).
@@ -103,8 +122,8 @@ the DMS → S3 → Snowflake ingestion architecture is covered in
 - [x] CDC merge model (DMS-style I/U/D stream → current state)
 - [x] FastAPI read layer over the marts
 - [x] React + TypeScript dashboard
-- [ ] Data catalog + lineage explorer (parsed from dbt artifacts)
-- [ ] Pipeline observability (dbt run/test results)
+- [x] Data catalog + lineage explorer (parsed from dbt artifacts)
+- [x] Pipeline observability (dbt run/test results)
 - [ ] AI chat: natural language → SQL over the marts (Claude API)
 - [ ] File-upload ingestion UI (CSV / pipe-delimited)
 - [ ] Airflow service in compose orchestrating the full loop

@@ -47,6 +47,20 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-platform}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-platform}
       MARTS_SCHEMA: ${MARTS_SCHEMA:-analytics_marts}
+      # Where the catalog / lineage / runs endpoints read dbt's artifacts. The
+      # code's default is a path relative to the repo, which does not exist in
+      # the image (the app is installed into site-packages), so compose points
+      # it at the mount below.
+      DBT_ARTIFACTS_DIR: /srv/dbt-target
+    volumes:
+      # dbt's manifest.json / run_results.json / catalog.json. These are BUILD
+      # OUTPUTS owned by whoever ran `make local-build` on the host — the API
+      # only ever reads them, so the mount is :ro and the container cannot
+      # corrupt a build. Bind-mounted rather than copied into the image on
+      # purpose: rebuild the dbt project and the API serves the new artifacts on
+      # the next request (dbt_artifacts.py caches on file mtime), no image
+      # rebuild, no restart.
+      - ./anz_banking/target:/srv/dbt-target:ro
     depends_on:
       postgres:
         # Wait for pg_isready, not just "container started", so the API's first

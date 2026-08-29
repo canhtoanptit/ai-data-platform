@@ -7,23 +7,49 @@
  * configure and no environment variable to get wrong.
  */
 
-import type { Case, CaseStatus, Health, MetricsSummary, PerformanceRow } from './types'
+import type {
+  Case,
+  CaseStatus,
+  Health,
+  LatestRun,
+  Lineage,
+  MetricsSummary,
+  ModelDetail,
+  ModelSummary,
+  PerformanceRow,
+} from './types'
 
 /** Thrown for any non-2xx response, so react-query surfaces it as `error`. */
 export class ApiError extends Error {
   readonly status: number
 
-  constructor(status: number, statusText: string, path: string) {
-    super(`GET ${path} failed: ${status} ${statusText}`)
+  constructor(status: number, message: string) {
+    super(message)
     this.name = 'ApiError'
     this.status = status
   }
 }
 
+/**
+ * FastAPI puts its own explanation in `{"detail": "..."}` — for a 503 that is
+ * "run `make local-build && make local-docs`", which is far more useful on
+ * screen than "Service Unavailable". Falls back to the status line when the
+ * body is not the JSON we expect (a proxy error page, say).
+ */
+async function errorMessage(response: Response, path: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { detail?: unknown }
+    if (typeof body.detail === 'string') return body.detail
+  } catch {
+    // Not JSON. Nothing to add.
+  }
+  return `GET ${path} failed: ${response.status} ${response.statusText}`
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path)
   if (!response.ok) {
-    throw new ApiError(response.status, response.statusText, path)
+    throw new ApiError(response.status, await errorMessage(response, path))
   }
   return (await response.json()) as T
 }
@@ -57,4 +83,32 @@ export function getCases(params: CaseQuery = {}): Promise<Case[]> {
   }
   const query = search.size > 0 ? `?${search}` : ''
   return getJson<Case[]>(`/api/cases${query}`)
+}
+
+/* --- dbt metadata ------------------------------------------------------------
+ *
+ * These four read dbt's build artifacts rather than the warehouse, so they
+ * answer 503 (not 500) until `make local-build && make local-docs` has run. The
+ * ApiError carries the API's own instructions as its message; QueryState turns
+ * a 503 into the empty state that shows them.
+ */
+
+/** Every model, seed and snapshot, ordered by pipeline layer then name. */
+export function getCatalogModels(): Promise<ModelSummary[]> {
+  return getJson<ModelSummary[]>('/api/catalog/models')
+}
+
+/** One node with its columns, tests, neighbours and SQL. 404 if unknown. */
+export function getCatalogModel(name: string): Promise<ModelDetail> {
+  return getJson<ModelDetail>(`/api/catalog/models/${encodeURIComponent(name)}`)
+}
+
+/** The whole DAG: sources, seeds, models and snapshots, plus their edges. */
+export function getLineage(): Promise<Lineage> {
+  return getJson<Lineage>('/api/catalog/lineage')
+}
+
+/** Status and timings of the last `dbt build`. */
+export function getLatestRun(): Promise<LatestRun> {
+  return getJson<LatestRun>('/api/runs/latest')
 }
