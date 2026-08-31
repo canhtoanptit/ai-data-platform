@@ -5,6 +5,10 @@ consumption layer a dashboard or agent would sit on top of. Two kinds of
 endpoint live behind it: the mart readers (`/api/metrics`, `/api/cases`,
 `/api/agents`) query Postgres, and the metadata readers (`/api/catalog`,
 `/api/runs`) parse the JSON artifacts dbt writes to `anz_banking/target/`.
+
+`/api/chat` is the third kind and uses both: dbt's metadata becomes the schema
+briefing an LLM writes SQL against, and the warehouse runs it. See
+`routers/chat.py`.
 """
 
 from fastapi import APIRouter, FastAPI, Request, status
@@ -15,7 +19,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .db import engine
 from .dbt_artifacts import ArtifactsUnavailable
-from .routers import agents, cases, catalog, metrics, runs
+from .llm import LlmError
+from .routers import agents, cases, catalog, chat, metrics, runs
 from .schemas import Health
 
 # Local dev servers for a front end: Vite (5173) and Next/CRA (3000). Kept as an
@@ -61,6 +66,18 @@ def artifacts_unavailable_handler(
     )
 
 
+def llm_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Map an LLM failure onto the status code its class already declares.
+
+    One handler for the whole family (see app/llm.py's table): a missing
+    GROQ_API_KEY is a 503 with setup instructions, a throttled free tier is a
+    429, everything else is a 502. `str(exc)` is safe to return here — every
+    message in that module is written by us, never copied from the provider.
+    """
+    status_code = getattr(exc, "status_code", status.HTTP_502_BAD_GATEWAY)
+    return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="ANZ Collections API",
@@ -71,16 +88,20 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
         allow_credentials=True,
-        allow_methods=["GET"],
+        # POST is here for exactly one endpoint: /api/chat takes a question in
+        # the body. Everything else is still a read.
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
     app.add_exception_handler(ArtifactsUnavailable, artifacts_unavailable_handler)
+    app.add_exception_handler(LlmError, llm_error_handler)
     app.include_router(health_router)
     app.include_router(metrics.router)
     app.include_router(cases.router)
     app.include_router(agents.router)
     app.include_router(catalog.router)
     app.include_router(runs.router)
+    app.include_router(chat.router)
     return app
 
 

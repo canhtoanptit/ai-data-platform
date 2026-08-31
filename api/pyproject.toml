@@ -11,6 +11,13 @@ dependencies = [
     # laptop needs a compiler or libpq-dev to install it.
     "psycopg2-binary>=2.9",
     "pydantic-settings>=2.6",
+    # The official OpenAI SDK, pointed at Groq's OpenAI-compatible endpoint (see
+    # app/llm.py). Using the compatible API rather than a vendor SDK keeps the
+    # provider swappable — Groq today, anything tomorrow, one env change.
+    "openai>=1.60",
+    # SQL parser used to validate the model's SQL before it reaches the
+    # warehouse. A parser, not a regex: see app/sql_guard.py.
+    "sqlglot>=25",
 ]
 
 [dependency-groups]

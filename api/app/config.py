@@ -44,6 +44,31 @@ class Settings(BaseSettings):
     # here. See dbt_artifacts.py.
     dbt_artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR
 
+    # --- AI chat (/api/chat) -------------------------------------------------
+    # Optional by design. Empty is the supported state: everything else in the
+    # app works without a key, and /api/chat answers 503 with instructions
+    # rather than crashing at import time. See app/llm.py.
+    groq_api_key: str = ""
+
+    # An OpenAI-*compatible* endpoint, so the provider is one env var away from
+    # being swapped (Groq today; OpenAI, Together, a local Ollama tomorrow).
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+
+    # Groq lists this as its flagship production model: 128k context, ~280
+    # tok/s, and strong enough at SQL for text-to-SQL over four tables. The
+    # smaller llama-3.1-8b-instant is faster but noticeably worse at joins;
+    # openai/gpt-oss-120b is the other credible pick. Overridable via LLM_MODEL.
+    llm_model: str = "llama-3.3-70b-versatile"
+
+    # Groq's free tier is fast but rate limited; 30s is generous for two
+    # sequential completions and still bounded so a hung call can't pin a
+    # worker thread.
+    llm_timeout_seconds: float = 30.0
+
+    @property
+    def llm_configured(self) -> bool:
+        return bool(self.groq_api_key.strip())
+
     @property
     def database_url(self) -> URL:
         # URL.create() rather than an f-string: it escapes passwords containing

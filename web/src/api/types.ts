@@ -169,3 +169,38 @@ export interface LatestRun {
   counts: RunCounts
   results: RunResultRow[]
 }
+
+/* --- AI chat (api/app/schemas_chat.py) ---------------------------------------
+ *
+ * The one endpoint whose result shape is not known ahead of time: the SQL is
+ * written per question, so the columns are data rather than a type.
+ */
+
+/** A single result cell. Dates arrive as ISO strings, numerics as numbers. */
+export type ChatCell = string | number | boolean | null
+
+export interface ChatAnswer {
+  question: string
+  /** The validated, row-limited SQL that actually ran. Always present. */
+  sql: string
+  columns: string[]
+  /** Positional rows matching `columns`. */
+  rows: ChatCell[][]
+  row_count: number
+  /** True when the 100-row cap was hit, so there may be more. */
+  truncated: boolean
+  /** null when the summarising LLM call failed — the rows are still the answer. */
+  answer: string | null
+  /** Which LLM wrote the SQL, e.g. `llama-3.3-70b-versatile`. */
+  model: string
+}
+
+/**
+ * The 422 body: the model produced SQL that the guard or the warehouse refused.
+ * Carries the attempt so the UI can show what it tried instead of a dead end.
+ */
+export interface ChatSqlRejected {
+  message: string
+  sql: string
+  error: string
+}

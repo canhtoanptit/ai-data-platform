@@ -52,6 +52,11 @@ services:
       # the image (the app is installed into site-packages), so compose points
       # it at the mount below.
       DBT_ARTIFACTS_DIR: /srv/dbt-target
+      # AI chat (/api/chat). `:-` so the stack still starts with no key in .env
+      # — the endpoint then answers 503 with setup instructions and every other
+      # endpoint is unaffected. The key is passed in, never baked into the image.
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
     volumes:
       # dbt's manifest.json / run_results.json / catalog.json. These are BUILD
       # OUTPUTS owned by whoever ran `make local-build` on the host — the API

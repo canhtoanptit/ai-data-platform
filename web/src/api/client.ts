@@ -10,6 +10,8 @@
 import type {
   Case,
   CaseStatus,
+  ChatAnswer,
+  ChatSqlRejected,
   Health,
   LatestRun,
   Lineage,
@@ -22,12 +24,26 @@ import type {
 /** Thrown for any non-2xx response, so react-query surfaces it as `error`. */
 export class ApiError extends Error {
   readonly status: number
+  /**
+   * The raw `detail` from the body, when it is not a plain string. `/api/chat`
+   * answers 422 with `{message, sql, error}` so the UI can show the SQL the
+   * model tried; `message` becomes the Error's message and this keeps the rest.
+   */
+  readonly detail: unknown
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, detail: unknown = undefined) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.detail = detail
   }
+}
+
+/** Narrows an ApiError's `detail` to the chat 422 shape. */
+export function isSqlRejected(error: unknown): error is ApiError & { detail: ChatSqlRejected } {
+  if (!(error instanceof ApiError)) return false
+  const detail = error.detail as Partial<ChatSqlRejected> | undefined
+  return typeof detail?.sql === 'string' && typeof detail?.error === 'string'
 }
 
 /**
@@ -36,20 +52,45 @@ export class ApiError extends Error {
  * screen than "Service Unavailable". Falls back to the status line when the
  * body is not the JSON we expect (a proxy error page, say).
  */
-async function errorMessage(response: Response, path: string): Promise<string> {
+async function apiError(response: Response, method: string, path: string): Promise<ApiError> {
+  const fallback = `${method} ${path} failed: ${response.status} ${response.statusText}`
   try {
     const body = (await response.json()) as { detail?: unknown }
-    if (typeof body.detail === 'string') return body.detail
+    const detail = body.detail
+    if (typeof detail === 'string') return new ApiError(response.status, detail)
+    // A structured detail (the chat 422). Keep the object for the caller and
+    // lift its `message` so generic error rendering still says something useful.
+    if (detail !== null && typeof detail === 'object') {
+      const message = (detail as { message?: unknown }).message
+      return new ApiError(
+        response.status,
+        typeof message === 'string' ? message : fallback,
+        detail,
+      )
+    }
   } catch {
     // Not JSON. Nothing to add.
   }
-  return `GET ${path} failed: ${response.status} ${response.statusText}`
+  return new ApiError(response.status, fallback)
 }
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path)
   if (!response.ok) {
-    throw new ApiError(response.status, await errorMessage(response, path))
+    throw await apiError(response, 'GET', path)
+  }
+  return (await response.json()) as T
+}
+
+/** The only write in the client: `/api/chat` takes the question in the body. */
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    throw await apiError(response, 'POST', path)
   }
   return (await response.json()) as T
 }
@@ -111,4 +152,17 @@ export function getLineage(): Promise<Lineage> {
 /** Status and timings of the last `dbt build`. */
 export function getLatestRun(): Promise<LatestRun> {
   return getJson<LatestRun>('/api/runs/latest')
+}
+
+/**
+ * Ask a natural-language question about the marts. The API writes the SQL with
+ * an LLM, validates it, runs it read-only and returns SQL + rows + prose.
+ *
+ * Four failure codes worth handling, all of them via ApiError.status:
+ * 503 (no GROQ_API_KEY on the server), 429 (free tier throttled), 422 (the
+ * model's SQL was rejected — `detail` carries the attempt, see isSqlRejected),
+ * 502 (the provider failed).
+ */
+export function askChat(question: string): Promise<ChatAnswer> {
+  return postJson<ChatAnswer>('/api/chat', { question })
 }

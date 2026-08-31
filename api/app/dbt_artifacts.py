@@ -94,6 +94,24 @@ def load_run_results() -> dict[str, Any]:
     return _read(RUN_RESULTS)
 
 
+def artifacts_fingerprint() -> tuple[float | None, ...]:
+    """The mtimes of manifest.json and catalog.json — a cache key for callers.
+
+    Anything *derived* from the artifacts wants the same invalidation rule the
+    loaders above use, and this is the smallest way to share it:
+    `schema_context.py` builds a string from both files and caches it against
+    this tuple, so a `make local-build` invalidates it too. None for a file
+    that is not there (catalog.json is optional).
+    """
+    fingerprint: list[float | None] = []
+    for filename in (MANIFEST, CATALOG):
+        try:
+            fingerprint.append((artifacts_dir() / filename).stat().st_mtime)
+        except OSError:
+            fingerprint.append(None)
+    return tuple(fingerprint)
+
+
 def load_catalog() -> dict[str, Any] | None:
     """Warehouse column types, or None when `dbt docs generate` hasn't run.
 

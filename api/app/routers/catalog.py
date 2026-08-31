@@ -101,12 +101,17 @@ def _catalog_nodes(manifest: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
-def _columns(
+def merge_columns(
     node: dict[str, Any],
     catalog_node: dict[str, Any] | None,
     tests: list[dict[str, Any]],
 ) -> list[NodeColumn]:
     """Union of the documented columns and the ones actually in the warehouse.
+
+    Public (no leading underscore) because `schema_context.py` calls it too: the
+    briefing the LLM gets about the marts has to be the same column list the
+    catalog page shows, and the merge rule below is subtle enough that a second
+    copy would drift.
 
     manifest.json lists only columns someone wrote a `.yml` entry for (3 of
     fct_collection_cases' 18); catalog.json lists all 18 with their types but no
@@ -174,7 +179,7 @@ def _summary(
         schema_name=node["schema"],
         materialization=node["config"]["materialized"],
         description=node.get("description") or "",
-        # Same union as _columns(), counted without building the objects.
+        # Same union as merge_columns(), counted without building the objects.
         column_count=len({name.lower() for name in warehouse_columns} | documented),
         test_count=len(tests),
     )
@@ -256,7 +261,7 @@ def get_model(name: str) -> ModelDetail:
     summary = _summary(node, catalog.get("nodes", {}).get(unique_id), tests)
     return ModelDetail(
         **summary.model_dump(),
-        columns=_columns(node, catalog.get("nodes", {}).get(unique_id), tests),
+        columns=merge_columns(node, catalog.get("nodes", {}).get(unique_id), tests),
         table_tests=[_test_label(test) for test in tests if not test.get("column_name")],
         depends_on=neighbour_names(_parents(node)),
         referenced_by=neighbour_names(children),

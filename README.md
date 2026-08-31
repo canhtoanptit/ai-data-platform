@@ -2,8 +2,8 @@
 
 A full-stack, locally-runnable **data platform**: files land in a warehouse,
 **dbt** transforms them into tested marts, a **FastAPI** layer serves them to
-applications, and a **React** dashboard (in progress) puts them on screen —
-with AI features (natural-language querying over the marts) on the roadmap.
+applications, a **React** dashboard puts them on screen, and an **AI chat** page
+answers questions in English by writing SQL against those marts.
 
 Everything runs on your laptop with `docker compose` — no cloud account, no
 credentials. The same dbt models also deploy unchanged to a **Snowflake / AWS**
@@ -28,9 +28,16 @@ CDC patterns meaningful, but the platform itself is domain-agnostic.
                                               ▼                               ▼         │
                                      ┌─────────────────┐             ┌────────────────┐ │
                                      │ FastAPI  :8000  │ ──────────► │ React dashboard│ │
-                                     │ /api/metrics/*  │    JSON     │ (Step 3)       │ │
+                                     │ /api/metrics/*  │    JSON     │ + Ask AI page  │ │
                                      │ /api/cases      │             └────────────────┘ │
-                                     └─────────────────┘        AI chat (NL→SQL) planned┘
+                                     │ /api/chat       │                                │
+                                     └────────┬────────┘                                ┘
+                                              │ NL→SQL
+                                              ▼
+                                     ┌─────────────────┐
+                                     │ LLM (Groq, via  │
+                                     │ OpenAI-compat.) │
+                                     └─────────────────┘
 
                         CLOUD (same dbt project, --target dev)
    source DBs ──AWS DMS──► S3 (CSV/pipe) ──COPY/Snowpipe──► Snowflake ──dbt──► marts
@@ -53,7 +60,12 @@ curl -s localhost:8000/api/metrics/summary
 #  "cure_rate_pct":25.0,"ptp_kept_rate_pct":50.0,"rpc_rate_pct":35.3}
 ```
 
-Then open the dashboard at <http://localhost:3000>. Four pages:
+For the AI chat page, add a free [Groq](https://console.groq.com) key —
+`GROQ_API_KEY=gsk_...` in `.env`, then `docker compose up -d api` — and ask a
+question at <http://localhost:3000/chat>. Without it that one page shows setup
+instructions and everything else works unchanged.
+
+Then open the dashboard at <http://localhost:3000>. Five pages:
 
 | Page | What it shows | Reads |
 |------|---------------|-------|
@@ -61,8 +73,9 @@ Then open the dashboard at <http://localhost:3000>. Four pages:
 | **Catalog** | Every model/seed/snapshot with its docs, columns, types, tests and SQL | `manifest.json` + `catalog.json` |
 | **Lineage** | The DAG, laid out left to right, colour-coded by layer | `manifest.json` |
 | **Runs** | Last `dbt build`: what passed, what failed, how long | `run_results.json` |
+| **Ask AI** | A question in English → generated SQL → rows → a sentence | `POST /api/chat` (both of the above) |
 
-The last three are the *metadata* half of the platform: they read the JSON
+Catalog, Lineage and Runs are the *metadata* half of the platform: they read the JSON
 artifacts dbt writes to `anz_banking/target/` rather than the warehouse, so the
 catalog is generated from the pipeline instead of maintained beside it. The API
 container gets them through a read-only bind mount (`docker-compose.yml`) and
@@ -94,8 +107,8 @@ default `generate_schema_name`):
 |-----------|--------------|-------|
 | **dbt project** | seeds → staging → intermediate → marts; tests, docs, SCD2 snapshot, macros, a DMS-style CDC incremental merge | [`anz_banking/`](./anz_banking) |
 | **Local warehouse** | Postgres 16 in compose; dbt `local` target | [`docker-compose.yml`](./docker-compose.yml) |
-| **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases` | [`api/`](./api) |
-| **Web** | React + TypeScript dashboard | [`web/`](./web) |
+| **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases`, plus `/api/chat` (NL→SQL) | [`api/`](./api) |
+| **Web** | React + TypeScript dashboard, catalog/lineage/runs explorers, and the Ask AI chat | [`web/`](./web) |
 | **Cloud warehouse path** | Snowflake `COPY INTO` ingestion + file generation (CSV & pipe-delimited) | [`snowflake/`](./snowflake) |
 | **Orchestration** | Airflow DAG (ingest → dbt build → unload), written MWAA-deployable | [`airflow/`](./airflow) |
 | **Semantic layer** | Cube models over the marts (metrics API alternative) | [`cube/`](./cube) |
@@ -124,7 +137,7 @@ the DMS → S3 → Snowflake ingestion architecture is covered in
 - [x] React + TypeScript dashboard
 - [x] Data catalog + lineage explorer (parsed from dbt artifacts)
 - [x] Pipeline observability (dbt run/test results)
-- [ ] AI chat: natural language → SQL over the marts (Claude API)
+- [x] AI chat: natural language → SQL over the marts (LLM via Groq's free tier)
 - [ ] File-upload ingestion UI (CSV / pipe-delimited)
 - [ ] Airflow service in compose orchestrating the full loop
 

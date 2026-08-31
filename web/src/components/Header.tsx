@@ -2,12 +2,13 @@ import { NavLink } from 'react-router-dom'
 
 import { HealthIndicator } from './HealthIndicator'
 
-/** The four pages, in the order the platform is built up. */
+/** The five pages, in the order the platform is built up. */
 const PAGES: ReadonlyArray<{ to: string; label: string }> = [
   { to: '/', label: 'Dashboard' },
   { to: '/catalog', label: 'Catalog' },
   { to: '/lineage', label: 'Lineage' },
   { to: '/runs', label: 'Runs' },
+  { to: '/chat', label: 'Ask AI' },
 ]
 
 export function Header() {

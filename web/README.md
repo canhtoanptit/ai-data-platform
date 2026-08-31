@@ -6,7 +6,7 @@ the last hop of the platform: files → warehouse → dbt marts → REST → scr
 Nothing here queries the warehouse. Every number on the page is a mart column the
 API handed over as JSON.
 
-## The four pages
+## The five pages
 
 Client-side routing (`react-router-dom`), one nav in the header. Real URLs, not
 hash routes — both servers fall back to `index.html` for unknown paths, so
@@ -65,6 +65,56 @@ tests report `pass | fail | warn` — so
 [`src/lib/runStatus.ts`](./src/lib/runStatus.ts) maps both onto a badge tone.
 An unrecognised status is `neutral`, never green: dbt has added statuses over
 releases (`no-op`, `reused`) and a new one must not be reported as a success.
+
+### Ask AI (`/chat`)
+
+Type a question in English; the API writes the SQL, runs it read-only and hands
+back the rows. Reads `POST /api/chat` — the only write in
+[`src/api/client.ts`](./src/api/client.ts).
+
+Each reply shows three things, in this order: the prose answer, the result table,
+and a collapsible **View SQL** block. The SQL is always there, because "what did
+it actually run?" is the first question anyone asks of a text-to-SQL feature, and
+being able to check it is what makes the answer worth trusting.
+
+Four failure modes, all rendered **in the thread** rather than as a page banner —
+the question they belong to is right above them, and the next question should
+still be askable:
+
+| Status | Rendered as |
+|--------|-------------|
+| `503` | a setup state: get a free key at console.groq.com, put `GROQ_API_KEY` in `.env`, restart the API |
+| `429` | "the free tier is rate limited — try again in a moment" |
+| `422` | the SQL the model tried, plus the validator's or the warehouse's complaint |
+| anything else | the API's `detail`, as an alert |
+
+`503` is the state the repo ships in, since the key is not committed — so it is
+treated as an unconfigured feature, not an error, exactly like `QueryState`'s
+"dbt hasn't run yet". Four clickable example questions stand in for an empty
+thread.
+
+There are two ways to get a `503` here, and they need different instructions:
+no API key, or no dbt artifacts (the schema briefing the model writes SQL against
+is built from them). The API's `detail` says which, so the UI keys off it rather
+than off the status code alone.
+
+Three decisions worth naming:
+
+- **Conversation memory is a deliberate non-goal for v1.** The endpoint is
+  single-turn: every question is answered from the schema alone, so follow-ups
+  ("and by team?") will not work. The transcript is a local `useState` array of
+  *turns* — a question and its own reply, discriminated on `status` so the
+  renderer cannot read an answer off a turn that failed — and it is gone on
+  reload. Memory would mean sending prior turns to the model and deciding what
+  to do when the context fills; the interesting problem here is the SQL.
+- **Plain `useState` and an `async` call, not TanStack Query.** Asking a question
+  is an action with a one-off result, not shared server state worth caching
+  under a key — the one place in the app where the query cache is the wrong tool.
+- **Result cells are printed unformatted**, unlike every other table here. Those
+  know what their column means; this SQL is written per question, so a number
+  could be a case id, a dollar amount or a percentage, and thousands separators
+  on `case_id 7001` would be actively wrong. Numbers are right-aligned so they
+  still line up.
 
 ### When dbt hasn't run yet
 
@@ -144,8 +194,10 @@ make web-test         # or: cd web && pnpm test
 
 Vitest + Testing Library: the formatters (including the null-rate rule), the
 bucket-order helper, the layer→colour and dbt-status→badge mappings, the dagre
-layout helper (a pure function, so no DOM needed), and the KPI tiles and run
-summary tiles rendered with mocked payloads.
+layout helper (a pure function, so no DOM needed), the KPI tiles and run summary
+tiles rendered with mocked payloads, the chat thread (a mocked exchange with its
+SQL block, the no-prose fallback, and each of the 503/429/422 states), and
+`askChat`'s request serialisation and error bodies against a stubbed `fetch`.
 
 ## How `/api` is reached in each mode
 
@@ -173,9 +225,9 @@ src/
   api/         client.ts (typed fetch fns), types.ts (mirrors the API's pydantic models)
   lib/         format.ts (formatters), buckets.ts (bucket order), palette.ts (colours),
                runStatus.ts (dbt status -> badge tone), dagreLayout.ts (DAG layout)
-  pages/       DashboardPage, CatalogPage, LineagePage, RunsPage — one per route
+  pages/       DashboardPage, CatalogPage, LineagePage, RunsPage, ChatPage — one per route
   components/  Header (+ nav), KpiTiles, the two charts, CasesTable, ModelDetail,
-               RunSummary, Badges, QueryState, Panel
+               RunSummary, Badges, QueryState, Panel, ChatThread
   index.css    the whole stylesheet: one palette, declared as CSS custom properties
 ```
 
