@@ -5,9 +5,15 @@
 DBT   := uv run --env-file .env dbt
 FLAGS := --project-dir anz_banking --profiles-dir .dbt
 
+# The API and eval targets want GROQ_API_KEY from .env when it is there, and
+# must still work when it is not — `make eval`'s reference-check mode is the
+# whole point. `uv run --env-file` errors on a missing file, so the flag is only
+# passed if .env exists. Path is ../.env because these targets `cd api` first.
+API_ENV := $(if $(wildcard .env),--env-file ../.env,)
+
 .PHONY: help deps debug seed run test build snapshot docs clean fresh \
         local-up local-build local-run local-test local-docs local-down \
-        api-dev api-test web-dev web-test stack-up stack-down
+        api-dev api-test eval web-dev web-test stack-up stack-down
 
 help:            ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -83,6 +89,14 @@ api-dev:         ## Run the API locally with autoreload (http://localhost:8000/d
 
 api-test:        ## Run the API integration tests (needs the local warehouse built)
 	cd api && uv run pytest
+
+eval:            ## Score the NL->SQL feature against api/evals/golden.yaml
+	# Two modes, and it says which. With GROQ_API_KEY set it runs the full
+	# pipeline and reports valid-SQL rate, execution rate and accuracy. Without
+	# one it runs in reference-check mode: every reference_sql in the golden file
+	# is still validated and executed, so a broken golden file fails here rather
+	# than silently scoring every future run. Add --threshold 75 for CI.
+	cd api && uv run $(API_ENV) python -m evals.run $(ARGS)
 
 # --- React dashboard (web/) --------------------------------------------------
 # Its own pnpm project, so `cd web` for the same reason api/ gets its own

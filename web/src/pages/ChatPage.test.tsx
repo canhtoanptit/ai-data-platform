@@ -96,6 +96,47 @@ describe('ChatPage', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('tells a spent token budget apart from a per-minute rate limit', async () => {
+    // Both are 429 and both are *expected states* of a working system, so
+    // neither is styled as an error — but the answer to "what now?" differs
+    // (tomorrow vs a minute), so the copy has to differ too.
+    stubFetch({
+      ok: false,
+      status: 429,
+      body: {
+        detail:
+          'The daily LLM token budget is exhausted (200,000/200,000 used); it '
+          + 'resets at midnight UTC.',
+      },
+    })
+    render(<ChatPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: EXAMPLE }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/AI budget is spent/)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/per-minute limit/)).not.toBeInTheDocument()
+    // Not an alert: nothing is broken, so nothing should be announced as broken.
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('renders a rate-limit 429 as a wait-a-moment note', async () => {
+    stubFetch({
+      ok: false,
+      status: 429,
+      body: { detail: 'Too many questions from this address (10 per 1 minute).' },
+    })
+    render(<ChatPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: EXAMPLE }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/per-minute limit/)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/AI budget is spent/)).not.toBeInTheDocument()
+  })
+
   it('renders a failure in the thread rather than throwing', async () => {
     stubFetch({
       ok: false,

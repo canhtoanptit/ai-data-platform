@@ -65,6 +65,19 @@ class Settings(BaseSettings):
     # worker thread.
     llm_timeout_seconds: float = 30.0
 
+    # --- Cost + abuse controls on /api/chat ----------------------------------
+    # Tokens per UTC day, summed over platform_ops.llm_calls (see app/tracing.py).
+    # 200k is roughly a day of demo use at ~2k tokens a question: high enough
+    # never to annoy a real user, low enough that a script pointed at the
+    # endpoint hits it in minutes rather than exhausting the provider quota.
+    llm_daily_token_budget: int = 200_000
+
+    # Requests per client IP, in slowapi's syntax. The budget above bounds *cost*
+    # over a day; this bounds *concurrency* right now — one client cannot queue
+    # up 200 questions and starve everyone else, and Groq's own free-tier limit
+    # is reached long before the token budget is.
+    chat_rate_limit: str = "10/minute"
+
     @property
     def llm_configured(self) -> bool:
         return bool(self.groq_api_key.strip())

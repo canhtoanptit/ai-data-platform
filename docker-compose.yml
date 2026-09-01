@@ -57,6 +57,13 @@ services:
       # endpoint is unaffected. The key is passed in, never baked into the image.
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-llama-3.3-70b-versatile}
+      # Cost + abuse controls on /api/chat. Both have code defaults matching
+      # these, so they are here to be *visible* — a spend limit you have to read
+      # config.py to discover is a spend limit nobody knows about. The budget is
+      # enforced by summing platform_ops.llm_calls, which the API creates in this
+      # same Postgres on first use (see app/tracing.py).
+      LLM_DAILY_TOKEN_BUDGET: ${LLM_DAILY_TOKEN_BUDGET:-200000}
+      CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-10/minute}
     volumes:
       # dbt's manifest.json / run_results.json / catalog.json. These are BUILD
       # OUTPUTS owned by whoever ran `make local-build` on the host — the API

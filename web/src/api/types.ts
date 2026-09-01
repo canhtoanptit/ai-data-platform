@@ -204,3 +204,46 @@ export interface ChatSqlRejected {
   sql: string
   error: string
 }
+
+/* --- LLM observability (api/app/schemas_ops.py) -------------------------------
+ *
+ * The API's own operational data, not the warehouse's: every /api/chat request
+ * writes a row to `platform_ops.llm_calls`, and this is that table aggregated.
+ * The daily token budget is enforced off the same rows, so the number shown here
+ * is the number that stops a request.
+ */
+
+export interface LlmUsageToday {
+  calls: number
+  /** prompt + completion, summed across today's (UTC) calls. */
+  tokens: number
+  /** LLM_DAILY_TOKEN_BUDGET on the server. */
+  budget: number
+  /** Computed server-side so no two clients can divide it differently. */
+  budget_used_pct: number
+}
+
+export interface LlmCallRow {
+  /** ISO 8601 UTC. */
+  ts: string
+  /** Truncated by the API — this is an operations table, not a transcript. */
+  question: string
+  /** `chat` for a real request, `eval` for the harness (`make eval`). */
+  source: string
+  model: string
+  /** null when the request never reached the SQL guard (budget, config). */
+  guard_ok: boolean | null
+  row_count: number | null
+  /** null, not 0, when the provider reported no usage. */
+  tokens: number | null
+  latency_ms_total: number
+  http_status: number
+  /** e.g. `UnsafeSql`, `BudgetExhausted`, `LlmRateLimited`. null on success. */
+  error_class: string | null
+}
+
+export interface LlmObservability {
+  today: LlmUsageToday
+  /** Most recent first, capped at 20 by the API. */
+  recent: LlmCallRow[]
+}

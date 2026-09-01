@@ -10,5 +10,10 @@ logs/
 __pycache__/
 *.pyc
 
+# Eval reports: one JSON per `make eval` run. Outputs, not source — a committed
+# one would be stale by the next commit, and the interesting comparison is
+# between two runs on your own machine.
+api/evals/results/
+
 # JetBrains IDE
 .idea/

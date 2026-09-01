@@ -65,6 +65,13 @@ For the AI chat page, add a free [Groq](https://console.groq.com) key —
 question at <http://localhost:3000/chat>. Without it that one page shows setup
 instructions and everything else works unchanged.
 
+The AI feature is measured and metered, not just built: `make eval` scores the
+generated SQL against a golden set by comparing *result sets* (and still checks
+that golden set with no API key at all), every request writes a row to
+`platform_ops.llm_calls`, and a daily token budget enforced from those same rows
+answers `429` before a runaway script can empty the account — with today's spend
+shown on the Runs page. Details in [`api/README.md`](./api/README.md#evals-is-the-sql-any-good).
+
 Then open the dashboard at <http://localhost:3000>. Five pages:
 
 | Page | What it shows | Reads |
@@ -72,7 +79,7 @@ Then open the dashboard at <http://localhost:3000>. Five pages:
 | **Dashboard** | KPI tiles, charts, the case table | the marts, via `/api/metrics/*` |
 | **Catalog** | Every model/seed/snapshot with its docs, columns, types, tests and SQL | `manifest.json` + `catalog.json` |
 | **Lineage** | The DAG, laid out left to right, colour-coded by layer | `manifest.json` |
-| **Runs** | Last `dbt build`: what passed, what failed, how long | `run_results.json` |
+| **Runs** | Last `dbt build`: what passed, what failed, how long — plus today's AI token spend against its budget | `run_results.json` + `/api/observability/llm` |
 | **Ask AI** | A question in English → generated SQL → rows → a sentence | `POST /api/chat` (both of the above) |
 
 Catalog, Lineage and Runs are the *metadata* half of the platform: they read the JSON
@@ -101,13 +108,17 @@ default `generate_schema_name`):
 | `analytics` | `int_accounts_cdc` (incremental CDC merge model) |
 | `snapshots` | SCD2 history |
 
+Plus one schema dbt does **not** own: `platform_ops`, created by the API for its
+own `llm_calls` trace table. Deliberately outside the `analytics_*` namespace so
+it cannot be mistaken for a mart that `dbt build` may drop and rebuild.
+
 ## Components
 
 | Component | What it does | Where |
 |-----------|--------------|-------|
 | **dbt project** | seeds → staging → intermediate → marts; tests, docs, SCD2 snapshot, macros, a DMS-style CDC incremental merge | [`anz_banking/`](./anz_banking) |
 | **Local warehouse** | Postgres 16 in compose; dbt `local` target | [`docker-compose.yml`](./docker-compose.yml) |
-| **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases`, plus `/api/chat` (NL→SQL) | [`api/`](./api) |
+| **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases`, plus `/api/chat` (NL→SQL), its eval harness and its LLM trace/budget endpoint | [`api/`](./api) |
 | **Web** | React + TypeScript dashboard, catalog/lineage/runs explorers, and the Ask AI chat | [`web/`](./web) |
 | **Cloud warehouse path** | Snowflake `COPY INTO` ingestion + file generation (CSV & pipe-delimited) | [`snowflake/`](./snowflake) |
 | **Orchestration** | Airflow DAG (ingest → dbt build → unload), written MWAA-deployable | [`airflow/`](./airflow) |
@@ -138,6 +149,7 @@ the DMS → S3 → Snowflake ingestion architecture is covered in
 - [x] Data catalog + lineage explorer (parsed from dbt artifacts)
 - [x] Pipeline observability (dbt run/test results)
 - [x] AI chat: natural language → SQL over the marts (LLM via Groq's free tier)
+- [x] Evals, LLM tracing + token budget
 - [ ] File-upload ingestion UI (CSV / pipe-delimited)
 - [ ] Airflow service in compose orchestrating the full loop
 

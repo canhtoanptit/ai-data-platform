@@ -1,4 +1,4 @@
-import { ApiError, isSqlRejected } from '../api/client'
+import { ApiError, isSqlRejected, throttleKind } from '../api/client'
 import type { ChatAnswer, ChatCell } from '../api/types'
 import { NO_VALUE } from '../lib/format'
 
@@ -148,7 +148,34 @@ function TurnError({ error }: { error: unknown }) {
     )
   }
 
+  // Three different things answer 429, and they are all *expected states* of a
+  // working system rather than failures — so none of them is styled as an error.
+  // They still need different words, because the answer to "what do I do now?"
+  // differs: wait a minute, wait until tomorrow, or raise a limit.
   if (error instanceof ApiError && error.status === 429) {
+    const kind = throttleKind(error)
+    if (kind === 'budget') {
+      return (
+        <div className="empty">
+          <p className="empty__title">Today's AI budget is spent</p>
+          <p className="empty__body">
+            This server caps how many tokens it will spend per day, so a runaway script
+            cannot empty the account. The cap resets at midnight UTC. See the AI usage
+            panel on the Runs page for today's total, or raise the limit:
+          </p>
+          <pre className="code code--inline">LLM_DAILY_TOKEN_BUDGET=500000</pre>
+          <p className="empty__detail">{error.message}</p>
+        </div>
+      )
+    }
+    if (kind === 'rate-limit') {
+      return (
+        <p className="chat__prose">
+          That's a lot of questions at once — this address has hit the per-minute limit.
+          Wait a moment and ask again.
+        </p>
+      )
+    }
     return (
       <p className="chat__prose">
         The free tier is rate limited and this question was throttled. Try again in a moment.

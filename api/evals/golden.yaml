@@ -1,0 +1,95 @@
+# The golden set for the NL->SQL eval harness. Run it with `make eval`.
+#
+# ─── How this works ──────────────────────────────────────────────────────────
+#
+# Each entry is one question and the SQL a human would have written for it. The
+# runner asks the LLM the `question`, validates and runs whatever SQL comes back,
+# runs your `reference_sql` too, and compares the two RESULT SETS — not the SQL
+# text. There are a dozen correct ways to write "total by bucket", and grading on
+# string similarity would fail all but one of them.
+#
+# The comparison is deliberately loose about presentation and strict about facts:
+#
+#   * row ORDER is ignored          — unordered multiset comparison
+#   * column NAMES are ignored      — `total_amount` vs `sum` is the model's
+#                                     choice of alias, not a wrong answer
+#   * column COUNT must match       — arity is not a naming choice; three columns
+#                                     where you asked for two is a different query
+#   * Decimal and float compare equal (tolerance 1e-9), dates compare as ISO
+#     strings, and NULL only ever equals NULL
+#
+# ─── Adding your own (this is the exercise) ──────────────────────────────────
+#
+# Extending this file by hand is the intended way to use the harness — a golden
+# set of four questions tells you almost nothing, and the questions YOU care
+# about are the ones worth measuring. Append entries in this shape:
+#
+#   - id: short_snake_case_name        # unique; it labels the row in the report
+#     question: The question in plain English, exactly as a user would ask it.
+#     reference_sql: |
+#       select ...
+#       from analytics_marts....
+#
+# Two rules that will save you time:
+#
+#   1. RUN YOUR REFERENCE SQL FIRST. `make eval` runs the reference leg even with
+#      no API key configured, so a typo shows up immediately as a failed
+#      reference — a broken golden file scores every model badly and looks like a
+#      model problem.
+#   2. Ask for exactly what you want back. "Which team cures the most?" invites
+#      one column or five; "Which team has the highest cure rate?" is a question
+#      with a shape, and the arity check will hold the model to it.
+#
+# Good things to add next: a question that needs a join across two marts, one
+# that needs the ordinal `delinquency_bucket` ordering (it does not sort
+# alphabetically — see schema_context.DOMAIN_NOTES), one whose honest answer is
+# zero rows, and one you expect the model to get WRONG. A suite that always
+# scores 100% has stopped measuring anything.
+#
+# The four tables available: fct_collection_cases, dim_customers, dim_agents,
+# collections_performance — all in schema `analytics_marts`. Build them with
+# `make local-up && make local-build` from the repo root.
+
+- id: highest_cure_rate_team
+  question: Which team has the highest cure rate?
+  # collections_performance is already aggregated to (team, bucket), so a team
+  # figure has to re-aggregate — averaging the per-bucket percentages would
+  # weight a 2-case bucket the same as a 4-case one.
+  reference_sql: |
+    select
+        team,
+        round(sum(cured_cases) * 100.0 / nullif(sum(case_count), 0), 1) as cure_rate_pct
+    from analytics_marts.collections_performance
+    group by team
+    order by cure_rate_pct desc
+    limit 1
+
+- id: delinquent_amount_by_bucket
+  question: What is the total delinquent amount in each delinquency bucket?
+  reference_sql: |
+    select
+        delinquency_bucket,
+        sum(delinquent_amount) as total_delinquent_amount
+    from analytics_marts.fct_collection_cases
+    group by delinquency_bucket
+    order by total_delinquent_amount desc
+
+- id: open_case_count
+  question: How many collection cases are currently open?
+  # A single scalar: the narrowest possible arity, so a model that answers with
+  # a breakdown by team fails the column-count check rather than passing on a
+  # technicality.
+  reference_sql: |
+    select count(*) as open_cases
+    from analytics_marts.fct_collection_cases
+    where case_status = 'open'
+
+- id: largest_balance_customer
+  question: Which customer has the largest total balance?
+  reference_sql: |
+    select
+        full_name,
+        total_balance
+    from analytics_marts.dim_customers
+    order by total_balance desc
+    limit 1

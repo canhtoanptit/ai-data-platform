@@ -1,20 +1,37 @@
 """Ask the marts a question in English: NL -> SQL -> rows -> prose.
 
-The endpoint is two LLM calls with the warehouse in between:
+The pipeline itself lives in [`app/nl2sql.py`](../nl2sql.py) — prompts, the LLM
+calls, the guard, the read-only execution. It was extracted from this file so
+that the eval harness (`evals/run.py`) exercises the identical code path; a
+runner with its own prompt measures a system nobody ships.
 
-    question ──► LLM #1 (write SQL, given the dbt-generated schema briefing)
-                    │
-                    ▼
-                 sql_guard.validate  ── rejected ──► retry once with the error,
-                    │                                 then 422 with the attempt
-                    ▼
-                 read-only transaction, 5s timeout, ≤100 rows
-                    │
-                    ▼
-                 LLM #2 (summarise the rows) ── fails ──► answer = null, rows stand
+What is left here is everything HTTP:
+
+    request validation (pydantic)
+        │
+        ▼
+    is there a key?            ── no ──► 503 with setup instructions (untraced)
+        │
+        ▼
+    rate limit, per client IP  ── over ──► 429 (untraced: slowapi rejects first)
+        │
+        ▼
+    today's token budget       ── spent ──► 429, traced
+        │
+        ▼
+    nl2sql.generate_validated_sql ── guard refused twice ──► 422 + the attempt
+        │
+        ▼
+    nl2sql.execute                ── warehouse refused ────► 422 + the SQL
+        │
+        ▼
+    nl2sql.summarise (best effort) ──► 200
+        │
+        ▼
+    tracing.record  (always, in a finally — see app/tracing.py)
 
 **Untrusted SQL is handled in three independent layers**, none of which relies on
-the others being correct:
+the others being correct (they are implemented in nl2sql.py / sql_guard.py):
 
 1. `sql_guard.validate` — parses the statement and refuses anything that is not
    a single SELECT. This is the layer that reasons about *intent*.
@@ -38,137 +55,32 @@ interesting problem here is the SQL, not the dialogue.
 
 from __future__ import annotations
 
-import datetime as dt
-from decimal import Decimal
-from typing import Any
+import time
 
-from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import text
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 
-from .. import llm
+from .. import llm, nl2sql, tracing
+from ..config import get_settings
 from ..db import DbConn
+from ..dbt_artifacts import ArtifactsUnavailable
+from ..rate_limit import limiter
 from ..schema_context import build_schema_context
 from ..schemas_chat import ChatRequest, ChatResponse
-from ..sql_guard import MAX_ROWS, UnsafeSql, strip_code_fences, validate
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
-# How long a single question's query may run. Small deliberately: every
-# reasonable question about a 8-row demo mart answers in milliseconds, so 5s is
-# already two orders of magnitude of headroom, and anything slower is a mistake
-# worth interrupting rather than waiting for.
-STATEMENT_TIMEOUT = "5s"
-
-# Rows sent to the summarising call. Capped well below MAX_ROWS because prose
-# over 100 rows is not prose anyone reads, and the tokens are better spent on
-# the schema. The table in the UI shows all of them regardless.
-ROWS_FOR_SUMMARY = 20
-
-_SQL_SYSTEM_PROMPT = f"""\
-You are a SQL analyst. You answer questions by writing ONE PostgreSQL SELECT
-statement over the tables described below.
-
-Rules:
-- Output SQL only. No prose, no explanation, no markdown code fences, no comments.
-- Exactly one statement. SELECT only — never INSERT, UPDATE, DELETE or DDL.
-- Always schema-qualify tables as analytics_marts.<table>.
-- Only use the tables and columns listed below. Do not invent columns.
-- Add a LIMIT of at most {MAX_ROWS} unless the query is a single aggregate row.
-- Label computed columns with a readable alias.
-- If the question cannot be answered from these tables, write the closest
-  SELECT that shows what data does exist rather than refusing.
-
-Tables:
-{{schema}}
-"""
-
-_ANSWER_SYSTEM_PROMPT = """\
-You are a data analyst reporting a query result to a colleague.
-
-Given a question, the SQL that answered it and the rows it returned, reply with
-two or three plain sentences stating what the numbers show. Quote the specific
-figures. Do not describe the SQL, do not mention tables or columns, and do not
-apologise or add caveats about the data. If the result is empty, say so plainly.
-"""
+# Read once at import: slowapi wants the limit as a string on the decorator, and
+# settings are process-wide anyway. Override with CHAT_RATE_LIMIT.
+_RATE_LIMIT = get_settings().chat_rate_limit
 
 
-def _json_safe(value: Any) -> Any:
-    """Convert a driver value into something JSON can carry.
-
-    Postgres hands back `Decimal` for numeric columns and `date`/`datetime` for
-    dates, neither of which json can serialise. Decimals become floats because
-    these are display figures in a chat answer, not ledger amounts — the same
-    call the mart response models already make. Anything unrecognised is
-    stringified rather than raising: the SQL is user-shaped, so a column of some
-    exotic type must degrade to a readable cell, not a 500.
-    """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, (dt.date, dt.datetime, dt.time)):
-        return value.isoformat()
-    return str(value)
-
-
-def _generate_sql(question: str, schema: str, previous_error: str | None = None) -> str:
-    """One SQL-writing call. `previous_error` appends the validator's complaint.
-
-    Retrying with the error is the cheapest accuracy fix available: the common
-    failures (a hallucinated column, a stray fence, a trailing explanation) are
-    ones the model corrects immediately once told. One retry, not a loop —
-    beyond the first, failures are usually the question, not the model, and a
-    loop would burn a rate-limited free tier on it.
-    """
-    prompt = f"Question: {question}"
-    if previous_error is not None:
-        prompt += (
-            f"\n\nYour previous SQL was rejected: {previous_error}\n"
-            "Return corrected SQL. SQL only."
-        )
-    raw = llm.complete(_SQL_SYSTEM_PROMPT.format(schema=schema), prompt)
-    return strip_code_fences(raw)
-
-
-def _run_read_only(conn: DbConn, sql: str) -> tuple[list[str], list[list[Any]]]:
-    """Execute validated SQL inside a read-only, time-boxed transaction.
-
-    `SET TRANSACTION READ ONLY` has to be the first thing in the transaction, so
-    the explicit `conn.begin()` matters — with SQLAlchemy's autobegin the SELECT
-    would open the transaction and the SET would arrive too late to apply to it.
-    `SET LOCAL` scopes the timeout to this transaction so it cannot leak onto the
-    next request to reuse this pooled connection.
-    """
-    with conn.begin():
-        conn.execute(text("set transaction read only"))
-        conn.execute(text(f"set local statement_timeout = '{STATEMENT_TIMEOUT}'"))
-        result = conn.execute(text(sql))
-        columns = list(result.keys())
-        rows = [[_json_safe(value) for value in row] for row in result.fetchmany(MAX_ROWS)]
-    return columns, rows
-
-
-def _summarise(question: str, sql: str, columns: list[str], rows: list[list[Any]]) -> str | None:
-    """Prose over the rows, or None if the second LLM call fails.
-
-    Swallowing this failure is the whole point: the rows and the SQL are the
-    answer, and losing the sentence that describes them is a much smaller loss
-    than turning a successful query into an error page. The UI has a fallback
-    line for exactly this.
-    """
-    preview = {
-        "columns": columns,
-        "rows": rows[:ROWS_FOR_SUMMARY],
-        "row_count": len(rows),
-    }
-    try:
-        return llm.complete(
-            _ANSWER_SYSTEM_PROMPT,
-            f"Question: {question}\n\nSQL:\n{sql}\n\nResult: {preview}",
-        )
-    except llm.LlmError:
-        return None
+def _budget_exhausted_detail(status_: tracing.BudgetStatus) -> str:
+    return (
+        f"The daily LLM token budget is exhausted "
+        f"({status_.used:,}/{status_.budget:,} used); it resets at midnight UTC. "
+        "Raise LLM_DAILY_TOKEN_BUDGET if this server should spend more."
+    )
 
 
 @router.post(
@@ -176,33 +88,61 @@ def _summarise(question: str, sql: str, columns: list[str], rows: list[list[Any]
     summary="Ask a natural-language question about the marts",
     responses={
         422: {"description": "The generated SQL was rejected; body carries the attempt"},
-        429: {"description": "The LLM provider's free tier throttled the request"},
+        429: {
+            "description": (
+                "Rate limited (too many questions from this IP), the daily token "
+                "budget is spent, or the LLM provider's free tier throttled us"
+            )
+        },
         502: {"description": "The LLM provider failed or timed out"},
         503: {"description": "No GROQ_API_KEY configured — see the detail for setup"},
     },
 )
-def ask(request: ChatRequest, conn: DbConn) -> ChatResponse:
-    question = request.question.strip()
+# slowapi keys on the client IP, and it finds the Request by looking for a
+# parameter *named* `request` — hence the raw Request keeps that name and the
+# body model is `payload`, even though this handler never reads `request`.
+@limiter.limit(_RATE_LIMIT)
+def ask(request: Request, payload: ChatRequest, conn: DbConn) -> ChatResponse:
+    question = payload.question.strip()
 
     # Checked up front so an unconfigured server answers instantly with
-    # instructions instead of building a schema briefing it will never use.
+    # instructions instead of building a schema briefing it will never use. This
+    # is also the one path deliberately left *untraced*: there is no call to
+    # trace, no model, no tokens — only a server that is not set up yet, which is
+    # a fact about configuration rather than an event in the LLM's history.
     if not llm.is_configured():
         raise llm.LlmNotConfigured()
 
-    schema = build_schema_context()
-
-    sql = _generate_sql(question, schema)
+    trace = tracing.LlmCallTrace(question=question, model=llm.model_name(), source="chat")
+    started = time.perf_counter()
     try:
-        safe_sql = validate(sql)
-    except UnsafeSql as first_error:
-        sql = _generate_sql(question, schema, previous_error=str(first_error))
-        try:
-            safe_sql = validate(sql)
-        except UnsafeSql as second_error:
+        # Budget enforcement is one SQL query over the trace table — the same
+        # artifact the observability endpoint reads. Observability and control
+        # from one place, so the number you are shown is the number that stops
+        # you. Checked before the LLM call, since the point is not to make it.
+        budget = tracing.budget_status()
+        if budget.exhausted:
+            trace.error_class = "BudgetExhausted"
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=_budget_exhausted_detail(budget),
+            )
+
+        schema = build_schema_context()
+        generation = nl2sql.generate_validated_sql(question, schema)
+        trace.tokens_prompt = generation.tokens_prompt
+        trace.tokens_completion = generation.tokens_completion
+        trace.latency_ms_llm = generation.latency_ms
+        trace.sql_text = generation.safe_sql or generation.sql
+        trace.guard_ok = generation.valid
+        trace.guard_error = generation.guard_error
+
+        if generation.safe_sql is None:
             # 422, not 500: the request was well-formed and the server is fine —
             # the model's answer was unusable. The attempt goes in the body
             # because seeing the rejected SQL is how anyone debugs this, and
             # hiding it would leave the UI with nothing to show.
+            trace.error_class = "UnsafeSql"
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
@@ -210,38 +150,76 @@ def ask(request: ChatRequest, conn: DbConn) -> ChatResponse:
                         "The model could not produce a safe SQL query for that "
                         "question, twice. Try rephrasing it."
                     ),
-                    "sql": sql,
-                    "error": str(second_error),
+                    "sql": generation.sql,
+                    "error": generation.guard_error,
                 },
-            ) from second_error
+            )
 
-    try:
-        columns, rows = _run_read_only(conn, safe_sql)
-    except SQLAlchemyError as exc:
-        # The guard proves the statement is a safe SELECT; it cannot prove the
-        # warehouse will accept it (a hallucinated column name parses fine).
-        # 422 again, with the SQL, for the same reason as above.
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "message": "The generated SQL was rejected by the warehouse.",
-                "sql": safe_sql,
-                # The database's own message names the bad column, which is the
-                # useful part. Only the *original* driver error, not the
-                # SQLAlchemy wrapper's str(), which includes the parameters.
-                "error": str(getattr(exc, "orig", exc)).strip(),
-            },
-        ) from exc
+        try:
+            execution = nl2sql.execute(conn, generation.safe_sql)
+        except SQLAlchemyError as exc:
+            # The guard proves the statement is a safe SELECT; it cannot prove
+            # the warehouse will accept it (a hallucinated column name parses
+            # fine). 422 again, with the SQL, for the same reason as above.
+            trace.error_class = "WarehouseRejected"
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "message": "The generated SQL was rejected by the warehouse.",
+                    "sql": generation.safe_sql,
+                    # The database's own message names the bad column, which is
+                    # the useful part. Only the *original* driver error, not the
+                    # SQLAlchemy wrapper's str(), which includes the parameters.
+                    "error": str(getattr(exc, "orig", exc)).strip(),
+                },
+            ) from exc
 
-    return ChatResponse(
-        question=question,
-        sql=safe_sql,
-        columns=columns,
-        rows=rows,
-        row_count=len(rows),
-        # Conservative: a result that exactly fills the cap is reported as
-        # possibly-truncated, because from here the two are indistinguishable.
-        truncated=len(rows) >= MAX_ROWS,
-        answer=_summarise(question, safe_sql, columns, rows),
-        model=llm.model_name(),
-    )
+        trace.latency_ms_sql = execution.latency_ms
+        trace.row_count = execution.row_count
+
+        summary = nl2sql.summarise(question, generation.safe_sql, execution)
+        if summary is not None:
+            # The summarising call's tokens count too. It is the same key and the
+            # same bill, and a budget that only counted the SQL leg would
+            # under-report every successful request by a third.
+            trace.tokens_prompt = (trace.tokens_prompt or 0) + (summary.tokens_prompt or 0)
+            trace.tokens_completion = (trace.tokens_completion or 0) + (
+                summary.tokens_completion or 0
+            )
+
+        trace.answered = True
+        trace.http_status = status.HTTP_200_OK
+        return ChatResponse(
+            question=question,
+            sql=generation.safe_sql,
+            columns=execution.columns,
+            rows=execution.rows,
+            row_count=execution.row_count,
+            truncated=execution.truncated,
+            answer=summary.text if summary is not None else None,
+            model=llm.model_name(),
+        )
+    except HTTPException as exc:
+        trace.http_status = exc.status_code
+        # A short label, never the detail body: the detail can carry the model's
+        # SQL (already in sql_text) and this column exists to be grouped by. Each
+        # raise site above sets its own; this is the fallback for any it misses.
+        trace.error_class = trace.error_class or type(exc).__name__
+        raise
+    except llm.LlmError as exc:
+        # 502/429/503 from the provider. The class name *is* the taxonomy here
+        # (LlmRateLimited vs LlmUnavailable), so it is exactly what you would
+        # group by when asking "why did today go wrong".
+        trace.http_status = exc.status_code
+        trace.error_class = type(exc).__name__
+        raise
+    except ArtifactsUnavailable:
+        # dbt has not run, so there is no schema briefing to write SQL against.
+        # main.py's handler turns this into a 503; recorded here so the trace
+        # agrees with what the client was told rather than defaulting to 500.
+        trace.http_status = status.HTTP_503_SERVICE_UNAVAILABLE
+        trace.error_class = "ArtifactsUnavailable"
+        raise
+    finally:
+        trace.latency_ms_total = round((time.perf_counter() - started) * 1000)
+        tracing.record(trace)

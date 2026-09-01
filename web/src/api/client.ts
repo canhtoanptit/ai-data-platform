@@ -15,6 +15,7 @@ import type {
   Health,
   LatestRun,
   Lineage,
+  LlmObservability,
   MetricsSummary,
   ModelDetail,
   ModelSummary,
@@ -44,6 +45,24 @@ export function isSqlRejected(error: unknown): error is ApiError & { detail: Cha
   if (!(error instanceof ApiError)) return false
   const detail = error.detail as Partial<ChatSqlRejected> | undefined
   return typeof detail?.sql === 'string' && typeof detail?.error === 'string'
+}
+
+/**
+ * Which kind of 429 this is. Both are *expected states* rather than faults, but
+ * they need different words: the budget is gone until midnight UTC and the user
+ * can do nothing about it, while a rate limit clears in under a minute.
+ *
+ * Matched on the message text because the API answers both with a plain
+ * `{"detail": "..."}` and one status code. A typed `code` field in the body
+ * would be sturdier; this stays in one place so there is one thing to change if
+ * the API ever grows one.
+ */
+export type ThrottleKind = 'budget' | 'rate-limit' | 'provider'
+
+export function throttleKind(error: ApiError): ThrottleKind {
+  if (error.message.includes('token budget')) return 'budget'
+  if (error.message.includes('Too many questions')) return 'rate-limit'
+  return 'provider'
 }
 
 /**
@@ -165,4 +184,16 @@ export function getLatestRun(): Promise<LatestRun> {
  */
 export function askChat(question: string): Promise<ChatAnswer> {
   return postJson<ChatAnswer>('/api/chat', { question })
+}
+
+/**
+ * Today's LLM spend against the budget, plus the last 20 traced calls.
+ *
+ * Always 200 on a running API — zeros and an empty list when nothing has been
+ * asked yet. The Runs page therefore treats *any* failure here (an older API
+ * without the endpoint, a proxy error) as "hide the section": an ops panel is
+ * not worth an error banner on a page about dbt.
+ */
+export function getLlmObservability(): Promise<LlmObservability> {
+  return getJson<LlmObservability>('/api/observability/llm')
 }

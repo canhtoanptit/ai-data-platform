@@ -1,8 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { getLatestRun } from '../api/client'
+import { getLatestRun, getLlmObservability } from '../api/client'
 import type { LatestRun, RunResultRow } from '../api/types'
 import { StatusBadge } from '../components/Badges'
+import { LlmUsage } from '../components/LlmUsage'
 import { Panel } from '../components/Panel'
 import { QueryState } from '../components/QueryState'
 import { RunSummary } from '../components/RunSummary'
@@ -63,15 +64,34 @@ function ResultsTable({ run }: { run: LatestRun }) {
 }
 
 /**
- * Pipeline observability: the last `dbt build`, node by node.
+ * Pipeline observability: the last `dbt build`, node by node — plus what the AI
+ * feature spent today.
  *
  * There is one run here, not a history — dbt overwrites run_results.json on
  * every invocation, so "the last run" is all the artifact holds. Ephemeral
  * models are missing for a different reason: dbt compiles them into their
  * consumers as CTEs instead of executing them, so it has nothing to report.
+ *
+ * The AI usage section is the opposite: `platform_ops.llm_calls` *is* a history,
+ * because the API appends to it rather than overwriting a file. Two sources, one
+ * page, because the question is the same one — is this thing healthy, and what
+ * is it costing.
  */
 export function RunsPage() {
   const query = useQuery({ queryKey: ['latest-run'], queryFn: getLatestRun })
+
+  const usage = useQuery({
+    queryKey: ['llm-observability'],
+    queryFn: getLlmObservability,
+    // No retry: the failure mode worth handling is "this API does not have the
+    // endpoint", which retrying cannot fix, and a retried 404 delays hiding the
+    // section by a few seconds of empty space.
+    retry: false,
+    // Traces arrive between page loads, so this one is worth refetching. Long
+    // enough not to poll, short enough that a tab left open goes stale rather
+    // than lying.
+    staleTime: 30_000,
+  })
 
   return (
     <>
@@ -80,6 +100,18 @@ export function RunsPage() {
           {(run) => <RunSummary run={run} />}
         </QueryState>
       </Panel>
+      {/* Rendered only on success — no QueryState, no error banner, no loading
+          shimmer. The section is a bonus on a page about dbt: an API without
+          /api/observability/llm (or with the endpoint failing) should look like
+          a stack that does not have the feature, not like a broken page. */}
+      {usage.isSuccess && (
+        <Panel
+          title="AI usage"
+          subtitle="Today's LLM spend and the last calls, from platform_ops.llm_calls"
+        >
+          <LlmUsage usage={usage.data} />
+        </Panel>
+      )}
       <Panel title="Nodes" subtitle="Every model, seed, snapshot and test dbt executed">
         <QueryState query={query} label="the last run">
           {(run) => <ResultsTable run={run} />}

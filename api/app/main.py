@@ -9,6 +9,10 @@ endpoint live behind it: the mart readers (`/api/metrics`, `/api/cases`,
 `/api/chat` is the third kind and uses both: dbt's metadata becomes the schema
 briefing an LLM writes SQL against, and the warehouse runs it. See
 `routers/chat.py`.
+
+`/api/observability/llm` is the fourth: it reads the API's *own* operational
+table, `platform_ops.llm_calls`, which every chat request writes a row to. See
+`routers/observability.py` and `app/tracing.py`.
 """
 
 from fastapi import APIRouter, FastAPI, Request, status
@@ -20,7 +24,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from .db import engine
 from .dbt_artifacts import ArtifactsUnavailable
 from .llm import LlmError
-from .routers import agents, cases, catalog, chat, metrics, runs
+from .rate_limit import RateLimitExceeded, limiter, rate_limit_handler
+from .routers import agents, cases, catalog, chat, metrics, observability, runs
 from .schemas import Health
 
 # Local dev servers for a front end: Vite (5173) and Next/CRA (3000). Kept as an
@@ -95,6 +100,11 @@ def create_app() -> FastAPI:
     )
     app.add_exception_handler(ArtifactsUnavailable, artifacts_unavailable_handler)
     app.add_exception_handler(LlmError, llm_error_handler)
+    # slowapi reads the limiter off app.state inside its decorator, so this
+    # assignment is wiring, not bookkeeping — without it the /api/chat route's
+    # @limiter.limit raises at request time. See app/rate_limit.py.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
     app.include_router(health_router)
     app.include_router(metrics.router)
     app.include_router(cases.router)
@@ -102,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(catalog.router)
     app.include_router(runs.router)
     app.include_router(chat.router)
+    app.include_router(observability.router)
     return app
 
 

@@ -28,6 +28,7 @@ formats an exception straight into a response body.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 
 import openai
@@ -84,6 +85,25 @@ class LlmUnavailable(LlmError):
         super().__init__(f"The LLM provider did not answer ({reason}).")
 
 
+@dataclass(frozen=True, slots=True)
+class Completion:
+    """The assistant's text plus what it cost.
+
+    Tokens come back as `None`, not 0, when the provider omits the `usage` block
+    (some OpenAI-compatible servers do, and streaming responses would). "Unknown"
+    and "free" are different facts: the trace table and the daily budget both sum
+    these, and counting an unknown as zero would quietly under-report spend.
+    """
+
+    text: str
+    tokens_prompt: int | None
+    tokens_completion: int | None
+
+    @property
+    def tokens_total(self) -> int:
+        return (self.tokens_prompt or 0) + (self.tokens_completion or 0)
+
+
 def is_configured() -> bool:
     return get_settings().llm_configured
 
@@ -111,8 +131,8 @@ def model_name() -> str:
     return get_settings().llm_model
 
 
-def complete(system: str, user: str, temperature: float = 0.0) -> str:
-    """One chat completion. Returns the assistant's text, or raises LlmError.
+def complete(system: str, user: str, temperature: float = 0.0) -> Completion:
+    """One chat completion. Returns text + token usage, or raises LlmError.
 
     temperature=0 by default: both calls in this feature (write SQL, summarise
     the rows) want the most likely answer, not a creative one.
@@ -147,4 +167,10 @@ def complete(system: str, user: str, temperature: float = 0.0) -> str:
     content = choices[0].message.content if choices else None
     if not content or not content.strip():
         raise LlmUnavailable("empty response")
-    return content.strip()
+
+    usage = response.usage
+    return Completion(
+        text=content.strip(),
+        tokens_prompt=usage.prompt_tokens if usage else None,
+        tokens_completion=usage.completion_tokens if usage else None,
+    )
