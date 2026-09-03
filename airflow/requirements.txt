@@ -1,5 +1,10 @@
 # MWAA requirements.txt — uploaded to the S3 env bucket; MWAA installs these
-# into every worker. Pin against your MWAA Airflow version's constraints file:
+# into every worker. This file is for the CLOUD path (`collections_elt`) only;
+# the local `file_ingest` DAG runs in the compose container built by
+# Dockerfile.local, which has its own, different dependency story (dbt-postgres
+# in an isolated venv — see the comments there).
+#
+# Pin against your MWAA Airflow version's constraints file:
 #   https://raw.githubusercontent.com/apache/airflow/constraints-<AIRFLOW_VERSION>/constraints-3.11.txt
 #
 # Providers used by the DAG:

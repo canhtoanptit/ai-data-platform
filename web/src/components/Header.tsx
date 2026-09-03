@@ -2,13 +2,17 @@ import { NavLink } from 'react-router-dom'
 
 import { HealthIndicator } from './HealthIndicator'
 
-/** The five pages, in the order the platform is built up. */
+/** The six pages, in the order the platform is built up. */
 const PAGES: ReadonlyArray<{ to: string; label: string }> = [
   { to: '/', label: 'Dashboard' },
   { to: '/catalog', label: 'Catalog' },
   { to: '/lineage', label: 'Lineage' },
   { to: '/runs', label: 'Runs' },
   { to: '/chat', label: 'Ask AI' },
+  // Last, because it is the only page that *starts* something — and because in
+  // the story the platform tells, ingestion is where the data came from and
+  // therefore where you go once you have seen what it became.
+  { to: '/ingest', label: 'Ingest' },
 ]
 
 export function Header() {

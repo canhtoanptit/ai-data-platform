@@ -33,6 +33,13 @@ COPY --from=builder /opt/venv /opt/venv
 # Run unprivileged. WORKDIR is /srv, not /app, so the cwd can never shadow the
 # installed `app` package on sys.path.
 RUN useradd --create-home --uid 1000 appuser
+# Where /api/ingest stages uploaded files. In compose this path is a named
+# volume shared with the Airflow container, and Docker seeds an empty volume
+# from this directory's owner and mode — so 1777 (/tmp's mode: anyone may add a
+# file, only its owner may remove it) is what lets two containers running as two
+# different uids hand files over. Created here as well as in the volume so the
+# image also works standalone, with UPLOADS_DIR pointing at a local directory.
+RUN mkdir -p /srv/uploads && chmod 1777 /srv/uploads
 WORKDIR /srv
 USER appuser
 

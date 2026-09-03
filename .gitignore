@@ -17,3 +17,16 @@ api/evals/results/
 
 # JetBrains IDE
 .idea/
+
+# Airflow runtime state. The compose service keeps ALL of it in named volumes
+# (`airflow_state` for the SQLite metadata DB and task logs, `uploads` for
+# staged files) precisely so nothing lands in the repo — and ./airflow/dags is
+# mounted read-only, so the scheduler cannot even write __pycache__ there.
+# These entries are belt-and-braces for anyone who follows the older
+# "practise locally in a virtualenv" path in airflow/README.md, where
+# AIRFLOW_HOME does end up on disk wherever you point it.
+airflow/logs/
+airflow/airflow.db
+airflow/airflow.cfg
+airflow/standalone_admin_password.txt
+airflow/uploads/

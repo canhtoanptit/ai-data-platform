@@ -1,0 +1,6 @@
+payment_id|account_id|payment_date|amount|method
+9016|5001|2024-04-15|175.00|direct_debit
+9017|5002|2024-04-05|500.00|direct_debit
+9018|5005|2024-04-28|140.00|card
+9019|5008|2024-04-10|400.00|direct_debit
+9020|5009|2024-04-22|260.00|bank_transfer

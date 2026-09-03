@@ -1,0 +1,82 @@
+# Airflow for the LOCAL demo loop (docker compose, profile `pipeline`).
+#
+# Named `.local` because it exists for the laptop only: on AWS MWAA you do not
+# build an image at all — you upload `requirements.txt` to the environment
+# bucket and MWAA installs it into every worker. This file is the compose-shaped
+# equivalent of that requirements.txt, which is why the two live side by side.
+#
+# Airflow **2.x** on purpose: MWAA runs the 2.x line, so pinning 2.10 here keeps
+# the DAGs (`collections_elt.py` especially) written against the API that would
+# actually deploy. 2.10.5 is the last 2.10 patch.
+FROM apache/airflow:2.10.5-python3.12
+
+# --- dbt, in its own virtualenv ----------------------------------------------
+#
+# "Airflow and dbt can fight over dependencies" is not a warning in this repo's
+# README, it is a measured fact: `pip install "apache-airflow==2.10.5"
+# dbt-postgres==1.11.0` fails outright with ResolutionImpossible, because
+# dbt-adapters/dbt-common want protobuf>=6 and Airflow 2.10's dependency tree
+# caps it below that. pip's only way out is to walk dbt back to 1.8 — which
+# would "work" and quietly write an older manifest.json schema than the one the
+# API parses and `make local-build` produces.
+#
+# So dbt gets its own interpreter. Two dependency trees, zero shared pins, and
+# dbt stays on **exactly** the version the repo's own tooling uses (root
+# pyproject.toml -> dbt-postgres 1.11 / dbt-core 1.12) so the artifacts this
+# container writes into anz_banking/target are byte-compatible with the ones the
+# API reads for the Catalog / Lineage / Runs pages.
+#
+# This is the same isolation astronomer-cosmos and MWAA-with-a-separate-dbt-task
+# achieve, done with the smallest possible tool. The symlink is what keeps the
+# DAG portable: `dbt` resolves on PATH here exactly as it does on an MWAA worker,
+# so `bash_command` needs no container-specific path. The venv's own shebang
+# means the symlink still runs dbt against dbt's interpreter, never Airflow's —
+# adding /opt/dbt-venv/bin to PATH would also have shadowed `python`, which is
+# precisely the coupling this avoids.
+USER root
+RUN python3 -m venv /opt/dbt-venv \
+    && /opt/dbt-venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/dbt-venv/bin/pip install --no-cache-dir "dbt-postgres==1.11.0" \
+    && ln -s /opt/dbt-venv/bin/dbt /usr/local/bin/dbt
+
+# --- the two mount points that need to exist before Docker fills them ---------
+#
+# Docker seeds an empty named volume from whatever is at the mount path in the
+# image, *including that directory's owner and mode*. Both of these are volumes
+# in docker-compose.yml, so their permissions are decided here, not there.
+#
+# uploads/ is the API -> Airflow handoff and is mounted into two containers that
+# run as two different users (the API image's `appuser` is uid 1000, this image's
+# `airflow` is uid 50000). Mode 1777 is /tmp's mode and /tmp's reasoning: any
+# process may add a file, and only the file's owner may remove it. Neither
+# container can be given the other's uid, and whichever one starts first would
+# otherwise decide the ownership for both.
+#
+# state/ holds the SQLite metadata DB and task logs. It is a volume so DAG run
+# history survives `make pipeline-down`, and it is *outside* the repo so Airflow
+# runtime droppings never land in ./airflow.
+RUN mkdir -p /opt/airflow/uploads /opt/airflow/state \
+    && chmod 1777 /opt/airflow/uploads \
+    && chown airflow:root /opt/airflow/state
+
+# --- Airflow's own environment ------------------------------------------------
+#
+# Back to the unprivileged airflow user, and the pattern from Airflow's
+# "Building the image" docs: repeat `apache-airflow==${AIRFLOW_VERSION}` in the
+# same pip install. ${AIRFLOW_VERSION} is baked into the base image, and naming
+# it is what stops pip from quietly upgrading or downgrading Airflow itself while
+# it resolves the packages below.
+#
+#   psycopg2-binary       — `copy_into_raw` in file_ingest.py imports psycopg2
+#                           directly for COPY FROM STDIN, which is a psycopg2 API
+#                           rather than anything DB-API generic.
+#   providers-common-sql  — SQLExecuteQueryOperator, imported by the *other* DAG
+#                           (collections_elt.py, the MWAA/Snowflake path). It
+#                           ships in the base image already; naming it means the
+#                           day a base image drops it, this build fails rather
+#                           than that DAG failing to import at runtime.
+USER airflow
+RUN pip install --no-cache-dir \
+    "apache-airflow==${AIRFLOW_VERSION}" \
+    "psycopg2-binary>=2.9" \
+    "apache-airflow-providers-common-sql"

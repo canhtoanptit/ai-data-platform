@@ -5,6 +5,7 @@ docker-compose.yml, so `uv run uvicorn app.main:app` works against the local
 warehouse with no .env file at all. In Docker, compose overrides POSTGRES_HOST.
 """
 
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -77,6 +78,42 @@ class Settings(BaseSettings):
     # up 200 questions and starve everyone else, and Groq's own free-tier limit
     # is reached long before the token budget is.
     chat_rate_limit: str = "10/minute"
+
+    # --- File-upload ingestion (/api/ingest) ---------------------------------
+    # Optional in exactly the same way the LLM key is: with no Airflow running,
+    # /api/ingest answers 503 with "make pipeline-up" and nothing else in the
+    # app notices. The Airflow service lives behind a compose profile that is
+    # off by default, so "not there" is the state the repo ships in.
+    #
+    # The default is the HOST port (8081, published by docker-compose.yml), which
+    # is what `make api-dev` needs. In compose the API reaches Airflow by service
+    # name on its container port, so compose sets AIRFLOW_BASE_URL=http://airflow:8080.
+    airflow_base_url: str = "http://localhost:8081"
+
+    # HTTP Basic against Airflow's stable REST API. Demo credentials, matching
+    # the deterministic admin user docker-compose.yml creates — see the comment
+    # there about why they are fixed and why MWAA has no equivalent.
+    airflow_username: str = "admin"
+    airflow_password: str = "admin"
+
+    # Short on purpose. Every call here is a small control-plane request
+    # (trigger a run, read its status) against a service on the same host, so a
+    # slow answer means something is wrong; waiting 30s to say so would make the
+    # Ingest page feel broken rather than informative.
+    airflow_timeout_seconds: float = 5.0
+
+    # Where uploads are staged for Airflow to read. In compose this is a named
+    # volume mounted into both containers. The default is a temp directory so the
+    # API starts anywhere — but note that a host-run API and a containerised
+    # Airflow do NOT share it, so the upload succeeds and the DAG's first task
+    # then fails saying it cannot find the file. The full loop wants the whole
+    # stack in compose (`make stack-up && make pipeline-up`).
+    uploads_dir: Path = Path(tempfile.gettempdir()) / "anz-uploads"
+
+    # 5 MB. Large enough for any hand-made demo extract, small enough that the
+    # limit is reached long before memory is: FastAPI spools multipart uploads
+    # over 1 MB to a temp file, and the check that enforces this reads in chunks.
+    max_upload_bytes: int = 5 * 1024 * 1024
 
     @property
     def llm_configured(self) -> bool:

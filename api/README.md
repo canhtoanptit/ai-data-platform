@@ -2,7 +2,9 @@
 
 A small **FastAPI** read layer over the marts dbt builds. It is the *consumption
 layer*: the warehouse holds the truth, this turns it into JSON a dashboard or an
-agent can call. Read-only — nothing here writes to the warehouse.
+agent can call. Nothing here writes to the warehouse — including `/api/ingest`,
+which validates an uploaded file and hands it to Airflow rather than loading it
+itself.
 
 Interactive docs (Swagger UI) come free at <http://localhost:8000/docs>.
 
@@ -34,6 +36,15 @@ warehouse to run the query (see below):
 |--------|------|---------|-------|
 | `POST` | `/api/chat` | One object | `{question}` in, `{question, sql, columns, rows, row_count, truncated, answer, model}` out. `503` without a `GROQ_API_KEY`. Rate limited per IP and capped by a daily token budget. |
 | `GET` | `/api/observability/llm` | `{today, recent}` | Today's LLM spend against the budget plus the last 20 traced calls. Always `200` — zeros when nothing has been asked. |
+
+And the ingestion endpoints, which talk to **Airflow** rather than to the
+warehouse or the artifacts (see below):
+
+| Method | Path | Returns | Notes |
+|--------|------|---------|-------|
+| `GET` | `/api/ingest/tables` | List | The allow-listed raw tables, each with the header a file must have and the dbt model built downstream. A static list — always `200`, even with Airflow off. |
+| `POST` | `/api/ingest` | `202 {dag_run_id, poll, …}` | Multipart: `table` + `file` (+ optional `delimiter`). `422` unknown table / bad extension / header mismatch, `413` over 5 MB, `503` when Airflow is not running. |
+| `GET` | `/api/ingest/runs/{dag_run_id}` | One object | Normalised run state plus a row per DAG task. Poll while `is_running`. |
 
 `/api/cases` query params:
 
@@ -388,6 +399,57 @@ simplification, because trusting `X-Forwarded-For` requires knowing which proxie
 are yours, and getting that wrong lets any client forge its identity and bypass
 the limit entirely.
 
+## Ingestion: `POST /api/ingest`
+
+The only write path, and it writes a file, not a row. The API's job here is to be
+a **validating front door**; Airflow's `file_ingest` DAG is the execution
+authority.
+
+```bash
+curl -sS -X POST localhost:8000/api/ingest \
+  -F table=raw_payments -F file=@../web/public/samples/new_payments.csv
+# 202
+# {"dag_run_id":"ingest__20260903T050541__f69d0cfb","dag_id":"file_ingest",
+#  "table":"raw_payments","filename":"ingest__20260903T050541__f69d0cfb__new_payments.csv",
+#  "poll":"/api/ingest/runs/ingest__20260903T050541__f69d0cfb"}
+
+curl -s localhost:8000/api/ingest/runs/ingest__20260903T050541__f69d0cfb
+# {"state":"success","is_running":false, "tasks":[
+#   {"task_id":"copy_into_raw","state":"success","duration_seconds":0.138,…},
+#   {"task_id":"dbt_build_downstream","state":"success","duration_seconds":3.687,…}]}
+```
+
+Five checks run before anything is staged, in this order: the table is on the
+allow-list, the extension is one we parse (`.csv` → comma, `.psv`/`.txt` → pipe,
+overridable), the body is under 5 MB, it is not empty, and its header matches the
+table's columns (order- and case-insensitive — the DAG names the columns in its
+`COPY` in the file's own order, and Postgres folded them to lowercase). Only then
+is the file written to `UPLOADS_DIR` and a DAG run triggered.
+
+Four decisions worth naming:
+
+* **The run id is ours, not Airflow's.** Left alone Airflow names a manual run
+  `manual__2026-09-03T05:05:41.823037+00:00`; `+` and `:` in a URL path segment
+  work until some proxy decides otherwise. `ingest__<ts>__<8 hex>` is
+  `[A-Za-z0-9_]` only — and it prefixes the staged filename too, so a file in the
+  volume is traceable to the run that consumed it.
+* **Only the path travels in `conf`.** A 5 MB CSV must never end up in Airflow's
+  metadata database. The API and Airflow share a named docker volume.
+* **The client filename is data.** It arrives in a multipart header anyone can
+  write by hand and is the one caller-supplied string this API joins to a
+  filesystem path, so it is reduced to an allow-list of characters after taking
+  the last segment under either separator. `tests/test_ingest.py` asserts the
+  property directly: whatever comes in, the joined path stays in its directory.
+* **The allow-list is duplicated in the DAG on purpose.** `INGESTABLE` here
+  exists so the browser gets a fast, specific 422; `TABLE_TO_STAGING` there
+  exists because the DAG is what actually writes, and it revalidates against the
+  live `information_schema` rather than a hardcoded list. A stale list here
+  rejects good files; it can never admit bad ones.
+
+`503` is the state the repo ships in — the Airflow compose profile is off by
+default — and the body says `make pipeline-up`, which the dashboard renders as a
+setup state. Same posture as a missing `GROQ_API_KEY`.
+
 ## Running it
 
 The API only serves what dbt has already built, so build the marts first:
@@ -436,6 +498,17 @@ so it runs with no `.env` at all.
 | `LLM_TIMEOUT_SECONDS` | `30` | per LLM call; `max_retries=0`, so one timeout is one timeout |
 | `LLM_DAILY_TOKEN_BUDGET` | `200000` | tokens per UTC day, summed over `platform_ops.llm_calls`; `/api/chat` answers 429 past it |
 | `CHAT_RATE_LIMIT` | `10/minute` | per client IP, chat route only, slowapi syntax |
+| `AIRFLOW_BASE_URL` | `http://localhost:8081` | the published host port; compose overrides it to `http://airflow:8080` |
+| `AIRFLOW_USERNAME` / `AIRFLOW_PASSWORD` | `admin` / `admin` | HTTP Basic against Airflow's stable REST API. Demo credentials — see `airflow/README.md` |
+| `AIRFLOW_TIMEOUT_SECONDS` | `5` | short on purpose: these are small control-plane calls to a service on the same host |
+| `UPLOADS_DIR` | *a temp dir* | where `/api/ingest` stages files; compose overrides it to `/srv/uploads`, a volume shared with Airflow |
+| `MAX_UPLOAD_BYTES` | `5242880` | 5 MB, enforced while reading in chunks — a 50 MB file is a `413` after 5 MB |
+
+`UPLOADS_DIR`'s default is a temp directory so the API starts anywhere, but note
+that a **host-run API and a containerised Airflow do not share it**: the upload
+succeeds and the DAG's first task then fails saying it cannot find the file. The
+full ingestion loop wants everything in compose (`make stack-up && make
+pipeline-up`).
 
 `DBT_ARTIFACTS_DIR`'s default is deliberately wrong inside Docker: the app is
 installed into site-packages, where there is no repo above it. Compose
@@ -472,7 +545,10 @@ app/
   rate_limit.py        the slowapi limiter + its 429 handler
   routers/chat.py      /api/chat    (HTTP only: codes, budget gate, trace row)
   routers/observability.py  /api/observability/llm
-  main.py              app factory, CORS, /api/health, the 503 + LLM + 429 handlers
+  airflow_client.py    Airflow REST: trigger a run, read its status; typed failures
+  schemas_ingest.py    pydantic response models for /api/ingest — an orchestration run
+  routers/ingest.py    /api/ingest/*  (validate, stage, hand off, report progress)
+  main.py              app factory, CORS, /api/health, the 503 + upstream + 429 handlers
 evals/golden.yaml      the questions + reference SQL — EDIT THIS, that's the exercise
 evals/compare.py       result-set comparison: the scoring rules
 evals/run.py           the runner (`make eval`); live + reference-check modes
@@ -484,6 +560,7 @@ tests/test_chat.py          the unconfigured 503 + request validation; live path
 tests/test_eval_compare.py  the eval scoring rules — pure functions, never skipped
 tests/test_eval_runner.py   the runner's orchestration, provider stubbed (see below)
 tests/test_observability.py tracing, the endpoint, the budget, the rate limit — no key needed
+tests/test_ingest.py        upload validation + the Airflow handoff; needs no Airflow
 ```
 
 `evals/` is a sibling of `app/`, not a module inside it: it is a test instrument,

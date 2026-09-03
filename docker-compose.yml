@@ -64,6 +64,19 @@ services:
       # same Postgres on first use (see app/tracing.py).
       LLM_DAILY_TOKEN_BUDGET: ${LLM_DAILY_TOKEN_BUDGET:-200000}
       CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-10/minute}
+      # File-upload ingestion (/api/ingest, the dashboard's Ingest page). The API
+      # stages the upload in the shared `uploads` volume and then asks Airflow to
+      # do the work over its REST API — so this service reaches `airflow` by
+      # service name, on the container's own 8080 (not the host's 8081).
+      #
+      # These have defaults in api/app/config.py pointing at localhost:8081, for
+      # running the API on the host with only the pipeline profile in Docker.
+      # They are set here so the compose-network values are visible rather than
+      # buried in Python.
+      AIRFLOW_BASE_URL: http://airflow:8080
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD:-admin}
+      UPLOADS_DIR: /srv/uploads
     volumes:
       # dbt's manifest.json / run_results.json / catalog.json. These are BUILD
       # OUTPUTS owned by whoever ran `make local-build` on the host — the API
@@ -73,11 +86,22 @@ services:
       # the next request (dbt_artifacts.py caches on file mtime), no image
       # rebuild, no restart.
       - ./anz_banking/target:/srv/dbt-target:ro
+      # The staging area for uploads, shared with the `airflow` service below.
+      # Read-WRITE here (this is the only writer) and the DAG reads from it. A
+      # 5 MB CSV therefore never travels through Airflow's REST API or its
+      # metadata database — only the path does.
+      - uploads:/srv/uploads
     depends_on:
       postgres:
         # Wait for pg_isready, not just "container started", so the API's first
         # connection doesn't race Postgres' startup.
         condition: service_healthy
+      # Deliberately NOT depends_on: airflow. The pipeline profile is off by
+      # default, and `depends_on` a service that is not in the active profile is
+      # ignored by compose — but writing it would still suggest the API needs
+      # Airflow to start, which it does not: /api/ingest answers 503 with
+      # "make pipeline-up" and every other endpoint is unaffected. Same
+      # optional-dependency posture as GROQ_API_KEY.
     restart: unless-stopped
 
   # React dashboard. The image is nginx serving a static build — it holds no
@@ -94,5 +118,154 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # --- Airflow: the orchestrator behind the Ingest page ----------------------
+  #
+  # OPT-IN. `profiles: ["pipeline"]` keeps it out of `docker compose up` and out
+  # of `make stack-up`: it is the heaviest service here (~1.5 GB image) and the
+  # other four are useful without it. `make pipeline-up` starts it.
+  #
+  # Single container running scheduler + webserver against a SQLite metadata DB
+  # with the SequentialExecutor — one task at a time, in-process. That is the
+  # right trade for a demo (nothing to configure, nothing else to run) and the
+  # wrong one for anything real: SQLite cannot serve concurrent writers, so a
+  # production Airflow uses a Postgres metadata database with the LocalExecutor
+  # or CeleryExecutor/KubernetesExecutor — which is exactly what AWS MWAA
+  # provisions for you, and why `collections_elt.py` is written for MWAA rather
+  # than for this container.
+  airflow:
+    build:
+      context: ./airflow
+      dockerfile: Dockerfile.local
+    image: anz-airflow:local
+    container_name: anz_airflow
+    profiles: ["pipeline"]
+    ports:
+      # 8081, not 8080: `make docs` serves dbt's documentation site on 8080 and
+      # wanting both at once is normal.
+      - "${AIRFLOW_PORT:-8081}:8080"
+    environment:
+      # SQLite + SequentialExecutor, stated rather than inherited — see the
+      # comment above for why this is a demo-only choice.
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/state/airflow.db
+      AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/state/logs
+      # Two DAGs, both ours. The ~40 example DAGs would bury them and their
+      # import errors would drown out real ones.
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      # This DAG is triggered by a person watching a progress panel, so the
+      # scheduler should notice a new file and a new run quickly rather than on
+      # the 5-minute default.
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "30"
+      # Turns on HTTP Basic auth for the stable REST API, which is how the API
+      # container triggers a run (POST /api/v1/dags/file_ingest/dagRuns). The
+      # `session` backend stays so the web UI still logs you in with a cookie.
+      # The classic module paths still work in 2.10 (they forward to the FAB
+      # provider) and are what MWAA documentation shows.
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+      # DEMO CREDENTIALS, deliberately deterministic: `airflow standalone`
+      # generates a random password and prints it once, which is unhelpful when
+      # another container has to authenticate. admin/admin is safe *because* this
+      # service is only reachable on localhost and holds nothing. On MWAA there
+      # are no Airflow users at all — access is IAM (`mwaa:CreateWebLoginToken`)
+      # and connections come from Secrets Manager.
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_PASSWORD:-admin}
+      # The warehouse, for BOTH the COPY in `copy_into_raw` and the `dbt build`
+      # after it. One set of variables means the two cannot disagree about which
+      # database they are working on. `postgres` is the service name; 5432 is
+      # that container's own port, not the host-mapped POSTGRES_PORT.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-platform}
+      POSTGRES_USER: ${POSTGRES_USER:-platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-platform}
+      # Same two variables collections_elt.py reads, so both DAGs point at the
+      # mounted checkout below.
+      AIRFLOW_DBT_DIR: /opt/airflow/dbt/anz_banking
+      AIRFLOW_DBT_PROFILES_DIR: /opt/airflow/dbt/.dbt
+      UPLOADS_DIR: /opt/airflow/uploads
+      # dbt writes a `.user.yml` cookie into the profiles directory when usage
+      # stats are on — and that directory is mounted read-only below. Off here
+      # rather than working around it: an orchestrator has no user to profile.
+      DBT_SEND_ANONYMOUS_USAGE_STATS: "false"
+    volumes:
+      # :ro — the scheduler parses these, it has no business editing them.
+      - ./airflow/dags:/opt/airflow/dags:ro
+      # READ-WRITE, and this is the load-bearing mount: `dbt build` writes
+      # target/manifest.json and target/run_results.json here, this is the same
+      # host directory the `api` service mounts at /srv/dbt-target:ro, and the
+      # API re-reads those files on mtime. So a DAG run showing up on the
+      # dashboard's Runs page needs no message passing at all — one shared
+      # directory, dbt writes, the API reads.
+      - ./anz_banking:/opt/airflow/dbt/anz_banking
+      # profiles.yml, holding the `local` target. :ro because it is
+      # configuration; every value in it comes from the POSTGRES_* vars above.
+      - ./.dbt:/opt/airflow/dbt/.dbt:ro
+      # The API's upload staging area, mounted at the path the DAG expects.
+      - uploads:/opt/airflow/uploads
+      # SQLite metadata DB + task logs. A named volume, so DAG run history
+      # survives a restart and nothing appears inside ./airflow.
+      - airflow_state:/opt/airflow/state
+    # Explicit rather than `airflow standalone`, for one reason: standalone
+    # invents a random admin password, and the API container needs to know it.
+    # This does the same three things standalone does, with credentials we chose.
+    # No triggerer — that process only serves deferrable operators, and neither
+    # DAG uses one.
+    command:
+      - bash
+      - -c
+      - |
+        set -euo pipefail
+        airflow db migrate
+        # `|| true`: on every restart after the first the user already exists,
+        # and that is a success condition, not a failure.
+        airflow users create --role Admin \
+          --username "$${_AIRFLOW_WWW_USER_USERNAME}" \
+          --password "$${_AIRFLOW_WWW_USER_PASSWORD}" \
+          --firstname Demo --lastname Admin --email admin@example.com || true
+        # Parse the DAGs folder into the metadata DB now, so `unpause` below has
+        # a row to update instead of racing the scheduler's first parse.
+        airflow dags reserialize
+        # Airflow pauses new DAGs by default, and a REST trigger against a paused
+        # DAG creates a run that sits in `queued` forever — a confusing failure
+        # for a page with a progress bar. So file_ingest is unpaused here.
+        #
+        # collections_elt is deliberately LEFT PAUSED. It is the MWAA/Snowflake
+        # DAG: it needs a `snowflake_default` connection that does not exist
+        # here, and its `0 6 * * *` schedule means unpausing it would have the
+        # scheduler immediately queue a run that fails. Paused, it still does its
+        # job — it imports cleanly and documents the cloud path.
+        airflow dags unpause file_ingest
+        airflow scheduler &
+        exec airflow webserver
+    healthcheck:
+      # /health answers 200 even when the scheduler is dead — it reports the
+      # state in the body — so the check reads the body. Without this, `--wait`
+      # would return on a webserver with nothing behind it to run DAGs.
+      test:
+        - CMD-SHELL
+        - >-
+          curl -sf http://localhost:8080/health
+          | python -c "import json,sys; h=json.load(sys.stdin);
+          sys.exit(0 if h['metadatabase']['status'] == 'healthy'
+          and h['scheduler']['status'] == 'healthy' else 1)"
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      # Generous: first boot runs the whole `airflow db migrate` before the
+      # webserver binds.
+      start_period: 90s
+    depends_on:
+      postgres:
+        # The DAG's first task COPYs into this warehouse, so there is no point
+        # accepting triggers before it is reachable.
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  # The API -> Airflow file handoff. Both containers mount it; permissions are
+  # set on the directory inside airflow/Dockerfile.local (see the comment there).
+  uploads:
+  # Airflow's SQLite metadata DB and task logs.
+  airflow_state:

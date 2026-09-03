@@ -22,13 +22,21 @@ dependencies = [
     # which gets the window arithmetic right and swaps to Redis by changing one
     # URI. See app/rate_limit.py.
     "slowapi>=0.1.9",
+    # Airflow's REST API client (app/airflow_client.py) — three calls, so a
+    # plain HTTP client rather than the `apache-airflow` package, which would
+    # pull its own Flask and SQLAlchemy into this service for nothing. Promoted
+    # from the dev group, where it was already present as fastapi's TestClient
+    # transport: it is now runtime code, and a dependency the app imports at
+    # request time does not belong in a dev-only group.
+    "httpx>=0.27",
+    # Multipart parsing for the file upload on /api/ingest. FastAPI raises at
+    # import time if a route declares Form()/UploadFile() without it.
+    "python-multipart>=0.0.18",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
-    # httpx is what fastapi's TestClient drives requests through.
-    "httpx>=0.27",
     # Reads evals/golden.yaml. A dev dependency, not a runtime one: the eval
     # harness runs from the source tree and is deliberately not packaged into
     # the Docker image, which serves the API and nothing else.
@@ -47,6 +55,15 @@ packages = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    # Starlette 1.6 renamed two status constants (HTTP_422_UNPROCESSABLE_ENTITY
+    # -> ..._CONTENT, HTTP_413_REQUEST_ENTITY_TOO_LARGE -> HTTP_413_CONTENT_TOO_LARGE).
+    # The app deliberately still uses the old names: they exist in every
+    # Starlette version this project's `fastapi>=0.115` floor allows, while the
+    # new ones do not — so switching would trade a warning for an ImportError on
+    # an older resolution. Silenced here so the churn stays out of the summary.
+    "ignore:'HTTP_4",
+]
 # `app` is installed as a package, but `evals` deliberately is not (it is a test
 # instrument, kept out of the wheel and the Docker image). Putting api/ on the
 # path is what lets tests/test_eval_compare.py import evals.compare.

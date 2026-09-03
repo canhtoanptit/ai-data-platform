@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { isFailure, statusTone } from './runStatus'
+import { isFailure, statusTone, taskStateLabel, taskStateTone } from './runStatus'
 
 describe('statusTone', () => {
   it('maps model statuses', () => {
@@ -35,5 +35,39 @@ describe('isFailure', () => {
     expect(isFailure('success')).toBe(false)
     expect(isFailure('pass')).toBe(false)
     expect(isFailure('warn')).toBe(false)
+  })
+})
+
+describe('taskStateTone', () => {
+  // Airflow's vocabulary, not dbt's: `failed`, not `error`.
+  it('maps Airflow terminal states', () => {
+    expect(taskStateTone('success')).toBe('good')
+    expect(taskStateTone('failed')).toBe('bad')
+  })
+
+  // The task itself did not fail; it never got to run. Same reasoning as dbt's
+  // skipped.
+  it('treats upstream_failed as a warning', () => {
+    expect(taskStateTone('upstream_failed')).toBe('warn')
+    expect(taskStateTone('skipped')).toBe('warn')
+  })
+
+  // A run in flight must not be painted red for the seconds it takes.
+  it('is neutral while a task is in flight', () => {
+    expect(taskStateTone('running')).toBe('neutral')
+    expect(taskStateTone('queued')).toBe('neutral')
+  })
+
+  // Airflow reports null for a task instance it has created but not queued.
+  it('is neutral for a task that has not started', () => {
+    expect(taskStateTone(null)).toBe('neutral')
+    expect(taskStateLabel(null)).toBe('not started')
+    expect(taskStateLabel('running')).toBe('running')
+  })
+
+  // dbt's `error` is not an Airflow state; it must not be quietly mapped.
+  it('is neutral about states it has never seen', () => {
+    expect(taskStateTone('error')).toBe('neutral')
+    expect(taskStateTone('deferred')).toBe('neutral')
   })
 })

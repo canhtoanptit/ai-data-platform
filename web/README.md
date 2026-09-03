@@ -6,7 +6,7 @@ the last hop of the platform: files → warehouse → dbt marts → REST → scr
 Nothing here queries the warehouse. Every number on the page is a mart column the
 API handed over as JSON.
 
-## The five pages
+## The six pages
 
 Client-side routing (`react-router-dom`), one nav in the header. Real URLs, not
 hash routes — both servers fall back to `index.html` for unknown paths, so
@@ -116,6 +116,43 @@ Three decisions worth naming:
   on `case_id 7001` would be actively wrong. Numbers are right-aligned so they
   still line up.
 
+### Ingest (`/ingest`)
+
+The one page that **starts** something. Pick a destination table, drag a file
+onto the drop zone (or use the picker), and watch the pipeline it triggers:
+`POST /api/ingest` → 202 + a run id → poll `/api/ingest/runs/{id}` until it
+settles.
+
+| Status | Rendered as |
+|--------|-------------|
+| `503` | a setup state: "the pipeline service is not running", with `make pipeline-up` |
+| `422` (header mismatch) | a **column diff** — missing, unexpected, expected, found |
+| `422` / `413` (other) | the API's `detail`, as an alert |
+| a settled run | a banner (green/red/neutral), a row per DAG task with its state and duration, and links to `/runs` and `/` |
+
+Four decisions worth naming:
+
+- **Polling is driven by the server's `is_running` flag**, not by the client
+  reading Airflow's state names. `refetchInterval` returns `false` once that flips
+  and the query stops on its own — and two different clients cannot disagree
+  about when a run is over.
+- **The run panel does not use `QueryState`.** Its 503 branch says "no dbt
+  artifacts yet — run `make local-build`", which is right for the catalog pages
+  and wrong here; a 503 on this query means Airflow stopped. So it reuses the
+  same renderer the upload failure does.
+- **A failed run is framed as the quality gate, not as a broken page.** Upload
+  the same file twice and dbt's `unique` test fails the build on purpose; the
+  banner explains that the bad rows are in the raw landing table and nothing
+  downstream was published. The page says so *before* you try it, too.
+- **The file input is visually hidden, not `display: none`.** A
+  `display: none` input leaves the accessibility tree and loses keyboard focus,
+  which would break the `<label>` that stands in for it — so it is clipped
+  instead, and a `:focus-visible` rule puts the focus ring on the label.
+
+Two sample files ([`public/samples/`](./public/samples)) are linked from the
+page — the same five payments as CSV and as pipe-delimited, so the delimiter
+inference is demonstrable in one click.
+
 ### When dbt hasn't run yet
 
 The last three pages read dbt's build artifacts, so the API answers **503** until
@@ -224,12 +261,20 @@ dev server at a remote API.)
 src/
   api/         client.ts (typed fetch fns), types.ts (mirrors the API's pydantic models)
   lib/         format.ts (formatters), buckets.ts (bucket order), palette.ts (colours),
-               runStatus.ts (dbt status -> badge tone), dagreLayout.ts (DAG layout)
-  pages/       DashboardPage, CatalogPage, LineagePage, RunsPage, ChatPage — one per route
+               runStatus.ts (dbt + Airflow status -> badge tone), dagreLayout.ts (DAG layout)
+  pages/       DashboardPage, CatalogPage, LineagePage, RunsPage, ChatPage, IngestPage
   components/  Header (+ nav), KpiTiles, the two charts, CasesTable, ModelDetail,
-               RunSummary, Badges, QueryState, Panel, ChatThread
+               RunSummary, Badges, QueryState, Panel, ChatThread, IngestRunPanel
   index.css    the whole stylesheet: one palette, declared as CSS custom properties
+public/
+  samples/     two downloadable demo extracts for the Ingest page (CSV + pipe)
 ```
+
+`runStatus.ts` holds **two** status maps, not one. dbt reports
+`success | error | skipped` and `pass | fail | warn`; Airflow reports
+`success | failed | running | queued | upstream_failed | skipped`. They share
+exactly one word, and merging them would produce a dictionary that is right about
+neither system's enum.
 
 Two notes on the styling, both deliberate:
 

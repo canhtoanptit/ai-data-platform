@@ -48,6 +48,11 @@ One dbt project, two targets: `local` (Postgres in compose) for development and
 demos, `dev` (Snowflake) for the cloud. Details in
 [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
+Both halves of that picture are orchestrated by **Airflow**, and both DAGs live in
+[`airflow/dags/`](./airflow). Locally, `file_ingest` runs in compose and is what
+the dashboard's Ingest page triggers (`raw files → COPY → scoped dbt build`); in
+the cloud, `collections_elt` is the same idea on MWAA against Snowflake.
+
 ## Quickstart (zero credentials)
 
 ```bash
@@ -59,6 +64,20 @@ curl -s localhost:8000/api/metrics/summary
 # {"total_cases":8,"open_cases":4,"total_delinquent_amount":16630.75,
 #  "cure_rate_pct":25.0,"ptp_kept_rate_pct":50.0,"rpc_rate_pct":35.3}
 ```
+
+For the **Ingest** page — drag a file in, watch a real pipeline run it — start
+Airflow too. It sits behind an opt-in compose profile because it is the heaviest
+service in the stack, and everything else works without it:
+
+```bash
+make pipeline-up   # Airflow on http://localhost:8081 (admin/admin); first run builds the image
+make pipeline-down # stops just Airflow; run history and staged uploads survive
+```
+
+Then drop [`web/public/samples/new_payments.csv`](./web/public/samples/new_payments.csv)
+onto <http://localhost:3000/ingest>. Without Airflow, that one page shows
+`make pipeline-up` and setup instructions — the same posture the Ask AI page
+takes toward a missing API key.
 
 For the AI chat page, add a free [Groq](https://console.groq.com) key —
 `GROQ_API_KEY=gsk_...` in `.env`, then `docker compose up -d api` — and ask a
@@ -72,7 +91,7 @@ that golden set with no API key at all), every request writes a row to
 answers `429` before a runaway script can empty the account — with today's spend
 shown on the Runs page. Details in [`api/README.md`](./api/README.md#evals-is-the-sql-any-good).
 
-Then open the dashboard at <http://localhost:3000>. Five pages:
+Then open the dashboard at <http://localhost:3000>. Six pages:
 
 | Page | What it shows | Reads |
 |------|---------------|-------|
@@ -81,6 +100,30 @@ Then open the dashboard at <http://localhost:3000>. Five pages:
 | **Lineage** | The DAG, laid out left to right, colour-coded by layer | `manifest.json` |
 | **Runs** | Last `dbt build`: what passed, what failed, how long — plus today's AI token spend against its budget | `run_results.json` + `/api/observability/llm` |
 | **Ask AI** | A question in English → generated SQL → rows → a sentence | `POST /api/chat` (both of the above) |
+| **Ingest** | Drop a CSV / pipe-delimited file, watch Airflow load it and dbt rebuild what depends on it | `POST /api/ingest` → Airflow REST |
+
+**Ingest is the only page that writes.** And it does not write to the warehouse
+itself: the API validates the file (allow-listed table, extension, 5 MB cap,
+header match) and stages it in a volume it shares with Airflow, then triggers the
+`file_ingest` DAG. The DAG does a bulk `COPY` into the raw landing table —
+appending, the way a landing table works — and then a `dbt build` **scoped to the
+touched staging model and its descendants**, tests included. Because that build
+writes its artifacts to the same `anz_banking/target/` the API already reads, the
+new run appears on the Runs page with no extra plumbing.
+
+> **Upload the same file twice on purpose.** The duplicate primary keys fail
+> dbt's `unique` test, the build exits non-zero and the DAG task goes red. That
+> is the quality gate working: the bad rows sit in the raw landing table where
+> you can inspect and remove them, and nothing downstream was published from
+> data that failed its contract. The alternative — a dashboard quietly showing
+> doubled totals — is the failure mode tests in a pipeline exist to prevent.
+>
+> To get back to a clean state, delete the rows you loaded and re-run
+> `make local-build`. That re-seeds `analytics_raw` from `anz_banking/seeds/`,
+> which is the demo's baseline — so **any uploaded rows are wiped by the next
+> `make local-build`**. In production a raw table is a landing table that only
+> accumulates; seeds stand in for one here purely so the repo has a reproducible
+> starting point.
 
 Catalog, Lineage and Runs are the *metadata* half of the platform: they read the JSON
 artifacts dbt writes to `anz_banking/target/` rather than the warehouse, so the
@@ -121,7 +164,7 @@ it cannot be mistaken for a mart that `dbt build` may drop and rebuild.
 | **API** | FastAPI read layer over the marts: `/api/metrics/*`, `/api/cases`, plus `/api/chat` (NL→SQL), its eval harness and its LLM trace/budget endpoint | [`api/`](./api) |
 | **Web** | React + TypeScript dashboard, catalog/lineage/runs explorers, and the Ask AI chat | [`web/`](./web) |
 | **Cloud warehouse path** | Snowflake `COPY INTO` ingestion + file generation (CSV & pipe-delimited) | [`snowflake/`](./snowflake) |
-| **Orchestration** | Airflow DAG (ingest → dbt build → unload), written MWAA-deployable | [`airflow/`](./airflow) |
+| **Orchestration** | Two Airflow DAGs: `file_ingest` (runs locally in compose, behind the Ingest page) and `collections_elt` (ingest → dbt build → unload, written MWAA-deployable) | [`airflow/`](./airflow) |
 | **Semantic layer** | Cube models over the marts (metrics API alternative) | [`cube/`](./cube) |
 
 Each component folder has its own README.
@@ -150,8 +193,7 @@ the DMS → S3 → Snowflake ingestion architecture is covered in
 - [x] Pipeline observability (dbt run/test results)
 - [x] AI chat: natural language → SQL over the marts (LLM via Groq's free tier)
 - [x] Evals, LLM tracing + token budget
-- [ ] File-upload ingestion UI (CSV / pipe-delimited)
-- [ ] Airflow service in compose orchestrating the full loop
+- [x] File-upload ingestion (CSV / pipe-delimited) orchestrated by Airflow in compose
 
 ## Learning docs
 

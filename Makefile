@@ -13,10 +13,11 @@ API_ENV := $(if $(wildcard .env),--env-file ../.env,)
 
 .PHONY: help deps debug seed run test build snapshot docs clean fresh \
         local-up local-build local-run local-test local-docs local-down \
-        api-dev api-test eval web-dev web-test stack-up stack-down
+        api-dev api-test eval web-dev web-test stack-up stack-down \
+        pipeline-up pipeline-down
 
 help:            ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 deps:            ## Install dbt packages (dbt_utils)
 	$(DBT) deps $(FLAGS)
@@ -117,3 +118,25 @@ stack-up:        ## Start the whole stack (Postgres + API + dashboard), wait unt
 
 stack-down:      ## Stop the whole stack (keeps the data volume)
 	docker compose down
+
+# --- Airflow (docker compose profile `pipeline`) ------------------------------
+# Its own profile, so `make stack-up` stays a 30-second start: the Airflow image
+# is by far the largest service here and the other four are useful without it.
+# Turning it on is what makes the dashboard's Ingest page work — the API answers
+# 503 with this exact make target until then.
+# First run builds the image (a few minutes: Airflow, plus dbt in its own venv).
+
+pipeline-up:     ## Start Airflow for the Ingest page (http://localhost:8081, admin/admin)
+	# --wait blocks on the healthcheck, which reads /health's body rather than
+	# its status code — so this returns when the SCHEDULER is up, not merely
+	# when the webserver is answering. See docker-compose.yml.
+	docker compose --profile pipeline up -d --wait
+
+pipeline-down:   ## Stop Airflow (keeps its run history and the uploads volume)
+	# Names the service, unlike `stack-down`. A bare `docker compose --profile
+	# pipeline down` would take Postgres, the API and the dashboard with it,
+	# which is the opposite of what turning one optional service off should mean.
+	# `rm -sf` = stop it, remove the container, don't ask; the named volumes
+	# (airflow_state, uploads) survive, so run history and staged files come
+	# back with `make pipeline-up`.
+	docker compose --profile pipeline rm -sf airflow

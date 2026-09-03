@@ -13,6 +13,10 @@ import type {
   ChatAnswer,
   ChatSqlRejected,
   Health,
+  IngestAccepted,
+  IngestHeaderMismatch,
+  IngestRunStatus,
+  IngestTable,
   LatestRun,
   Lineage,
   LlmObservability,
@@ -45,6 +49,32 @@ export function isSqlRejected(error: unknown): error is ApiError & { detail: Cha
   if (!(error instanceof ApiError)) return false
   const detail = error.detail as Partial<ChatSqlRejected> | undefined
   return typeof detail?.sql === 'string' && typeof detail?.error === 'string'
+}
+
+/**
+ * Narrows an ApiError's `detail` to the upload 422 shape (a header that does not
+ * match the table). Same idea as `isSqlRejected`: the API answers a structured
+ * detail so the UI can name the columns instead of saying "invalid file".
+ */
+export function isHeaderMismatch(
+  error: unknown,
+): error is ApiError & { detail: IngestHeaderMismatch } {
+  if (!(error instanceof ApiError)) return false
+  const detail = error.detail as Partial<IngestHeaderMismatch> | undefined
+  return Array.isArray(detail?.missing) && Array.isArray(detail?.unexpected)
+}
+
+/**
+ * True when the failure is "the Airflow service is not running".
+ *
+ * The API answers 503 for exactly one reason on the ingest endpoints — its
+ * orchestrator is not up — and puts the fix (`make pipeline-up`) in the detail.
+ * A 503 on the *catalog* endpoints means something different ("dbt hasn't run
+ * yet"), which is why this is a named predicate on the ingest path rather than a
+ * bare `status === 503` check spread through the page.
+ */
+export function isPipelineOffline(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 503
 }
 
 /**
@@ -196,4 +226,51 @@ export function askChat(question: string): Promise<ChatAnswer> {
  */
 export function getLlmObservability(): Promise<LlmObservability> {
   return getJson<LlmObservability>('/api/observability/llm')
+}
+
+/* --- file-upload ingestion ---------------------------------------------------
+ *
+ * The only write path. `/api/ingest/tables` is a static allow-list and always
+ * answers 200; the other two need the Airflow service and answer 503 with
+ * `make pipeline-up` when it is off — see isPipelineOffline above.
+ */
+
+/** Which raw tables accept an upload, and the header each one expects. */
+export function getIngestTables(): Promise<IngestTable[]> {
+  return getJson<IngestTable[]>('/api/ingest/tables')
+}
+
+/**
+ * Upload a file and start an ingestion run. 202, not 200: the API validates and
+ * stages the file, then hands off to Airflow — the load itself happens after
+ * this resolves, which is what `poll` is for.
+ *
+ * Failure codes worth handling, all via ApiError.status: 503 (Airflow is not
+ * running), 422 (unknown table, unsupported extension, or a header mismatch —
+ * `detail` carries the column diff, see isHeaderMismatch), 413 (over 5 MB).
+ */
+export async function uploadIngestFile(input: {
+  table: string
+  file: File
+  /** Overrides the delimiter the API infers from the extension. */
+  delimiter?: string
+}): Promise<IngestAccepted> {
+  const form = new FormData()
+  form.set('table', input.table)
+  form.set('file', input.file)
+  if (input.delimiter) form.set('delimiter', input.delimiter)
+
+  // No Content-Type header on purpose: fetch derives `multipart/form-data` from
+  // the FormData body *and* generates the boundary. Setting it by hand omits the
+  // boundary and the server cannot parse the body.
+  const response = await fetch('/api/ingest', { method: 'POST', body: form })
+  if (!response.ok) {
+    throw await apiError(response, 'POST', '/api/ingest')
+  }
+  return (await response.json()) as IngestAccepted
+}
+
+/** One ingestion run: overall state plus its two tasks. Poll while `is_running`. */
+export function getIngestRun(dagRunId: string): Promise<IngestRunStatus> {
+  return getJson<IngestRunStatus>(`/api/ingest/runs/${encodeURIComponent(dagRunId)}`)
 }

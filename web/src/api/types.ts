@@ -247,3 +247,71 @@ export interface LlmObservability {
   /** Most recent first, capped at 20 by the API. */
   recent: LlmCallRow[]
 }
+
+/* --- file-upload ingestion (api/app/schemas_ingest.py) -----------------------
+ *
+ * The only write path in the platform, and the only one whose result is not
+ * available in the response: the API validates and stages the file, Airflow does
+ * the COPY and the dbt build. So an upload returns 202 + a run id, and the page
+ * polls `IngestRunStatus` until it stops being `is_running`.
+ */
+
+/** One raw table that accepts an upload, plus the header a file must have. */
+export interface IngestTable {
+  name: string
+  /** For the dropdown, e.g. `Payments`. */
+  label: string
+  /** The dbt model built downstream of a load into this table. */
+  staging_model: string
+  /** Expected header, in the raw table's column order. Any order is accepted. */
+  columns: string[]
+}
+
+/** The 202 body: the file is staged and Airflow has a run for it. */
+export interface IngestAccepted {
+  dag_run_id: string
+  dag_id: string
+  table: string
+  /** The sanitised name the API staged the file under, not the one we sent. */
+  filename: string
+  /** Where to poll, already assembled by the API. */
+  poll: string
+}
+
+export interface IngestTaskState {
+  task_id: string
+  /**
+   * Airflow's task state: `success | running | failed | upstream_failed |
+   * queued | skipped`. `null` for a task instance Airflow has created but not
+   * yet queued — a real state ("not started"), not missing data.
+   */
+  state: string | null
+  duration_seconds: number | null
+  started_at: string | null
+  ended_at: string | null
+}
+
+export interface IngestRunStatus {
+  dag_run_id: string
+  /** `queued | running | success | failed`. */
+  state: string
+  /** Computed server-side, so no two clients disagree about when to stop polling. */
+  is_running: boolean
+  started_at: string | null
+  ended_at: string | null
+  /** In execution order: `copy_into_raw`, then `dbt_build_downstream`. */
+  tasks: IngestTaskState[]
+}
+
+/**
+ * The upload 422 body when the file's header does not match the table. Same
+ * pattern as `ChatSqlRejected`: a structured detail so the UI can show the diff
+ * instead of a dead end.
+ */
+export interface IngestHeaderMismatch {
+  message: string
+  expected: string[]
+  found: string[]
+  missing: string[]
+  unexpected: string[]
+}
